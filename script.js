@@ -19,7 +19,13 @@ window.addEventListener('DOMContentLoaded', () => {
     // Asignar evento al botón Limpiar si existe
     const clearBtn = document.getElementById('clearBtn');
     if (clearBtn) {
-        clearBtn.onclick = function() {
+        clearBtn.onclick = async function() {
+            // Eliminar todas las imágenes del backend
+            for (let img of imagesData) {
+                if (img._id) {
+                    await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
+                }
+            }
             imagesData = [];
             imageStartNumber = 1; // Reinicia el número inicial
             saveSession();
@@ -119,8 +125,8 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // --- NUEVO: Configuración para usar backend Node.js + MongoDB ---
-// Cambia la URL base según tu despliegue en Render.com
-const API_BASE_URL = 'https://TU-APP-RENDER-URL.onrender.com'; // <-- Cambia esto al URL real
+// Cambia la URL base según tu despliegue en local o en la nube
+const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://backend-reportes-dm2f.onrender.com'; // <-- URL pública de Render.com
 
 // --- Reemplazar localStorage por backend ---
 async function saveSession() {
@@ -139,9 +145,10 @@ async function saveSession() {
 async function loadSession() {
     const res = await fetch(`${API_BASE_URL}/images`);
     const data = await res.json();
-    imagesData = data;
+    // Asignar imageData como src para cada imagen
+    imagesData = data.map(img => ({ ...img, src: img.imageData }));
     imageCount = imagesData.length;
-    imageStartNumber = 1; // Puedes guardar esto en backend si lo necesitas
+    imageStartNumber = 1;
     renderGrid();
     if (imagesData.length > 0) generateBtn.disabled = false;
 }
@@ -155,15 +162,22 @@ async function handleImageUpload(event) {
     let newImages = [];
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const formData = new FormData();
-        formData.append('image', file);
-        formData.append('description', '');
-        formData.append('status', '');
+        // Leer archivo como base64
+        const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+        // Enviar al backend como JSON
         const res = await fetch(`${API_BASE_URL}/upload`, {
             method: 'POST',
-            body: formData
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageData: base64, description: '', status: '' })
         });
         const img = await res.json();
+        // Usar imageData como src para mostrar
+        img.src = img.imageData;
         newImages.push(img);
         progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
     }
