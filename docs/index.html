@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporte Fotográfico de Inspección</title>
+    <script src="index.umd.js"></script>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="info-modal.css">
+</head>
+<body>
+    <div class="container">
+        <button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?">?</button>
+        <div class="header">
+            <h1 style="font-family: Tahoma, Arial, sans-serif;">REPORTE FOTOGRÁFICO DE INSPECCIÓN</h1>
+            <div class="convenciones-block">
+                <div class="convenciones-titulo">Convenciones:</div>
+                <div class="convenciones-list">
+                    <div class="convencion-item"><img src="verde.png.jpg" class="estado-icono" alt="Verde" /> Buen estado</div>
+                    <div class="convencion-item"><img src="amarillo.png.avif" class="estado-icono" alt="Amarillo" /> Observaciones de mejora</div>
+                    <div class="convencion-item"><img src="rojo.png.avif" class="estado-icono" alt="Rojo" /> No conformidad. Requiere intervención.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="upload-section">
+            <div class="upload-section-inner">
+                <div id="imageInputWrapper" class="main-btn">
+                    <label for="imageInput">
+                        📷 Seleccionar Imágenes
+                        <input type="file" multiple accept="image/*" id="imageInput" style="display:none;">
+                    </label>
+                </div>
+                <button id="clearBtn" class="main-btn" type="button">
+                    🧹 Limpiar
+                </button>
+                <button id="quickStateBtn" class="main-btn" type="button">
+                    ⚡ Selección rápida de estado
+                </button>
+            </div>
+            <div class="loading" id="loadingText">Procesando imágenes...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div id="gridContainer" class="image-grid"></div>
+        </div>
+
+        <div class="generate-section">
+            <button class="generate-btn" id="generateBtn" onclick="generateWord()">
+                📄 Generar Reporte Word
+            </button>
+        </div>
+    </div>
+
+    <div id="cropperModal" class="cropper-modal" style="display:none;">
+        <div class="cropper-container">
+            <canvas id="cropperCanvas"></canvas>
+            <div class="cropper-btns">
+                <button id="cropperOkBtn">Recortar</button>
+                <button class="cancel" id="cropperCancelBtn">Cancelar</button>
+            </div>
+        </div>
+    </div>
+    <footer class="footer">
+        Diseñado por <span>Zamir Pabón</span> | Empresa Familiar &copy; 2025<br>
+        <span style="font-size:0.98rem;color:#fff;opacity:0.7;">Esta aplicación genera reportes fotográficos de inspección en Word. Próximamente: más formatos y funciones.</span>
+    </footer>
+    <!-- Modal de info -->
+    <div id="infoModal" class="info-modal-bg" style="display:none;">
+      <div class="info-modal-content">
+        <button class="close-info-btn" id="closeInfoBtn" title="Cerrar">×</button>
+        <h2 style="text-align:center;margin-bottom:18px;color:#2980b9;letter-spacing:0.5px;">¿Qué hace esta aplicación?</h2>
+        <div class="info-slider">
+          <button class="info-arrow left" id="infoPrevBtn" title="Anterior" aria-label="Anterior">&#60;</button>
+          <div class="info-slide active" id="infoSlide0">
+            <div class="info-card">
+              <h3>Descripción general</h3>
+              <p style="font-size:1.08rem;line-height:1.6;margin-bottom:10px;">
+                Esta aplicación te permite crear reportes fotográficos de inspección de manera rápida y profesional. Sube imágenes, asígnales un estado, ordénalas y genera un documento Word listo para compartir.<br><br>
+                <b>Ideal para empresas, técnicos y supervisores que buscan eficiencia y claridad en sus reportes.</b>
+              </p>
+              <p style="color:#e67e22;font-weight:bold;">Próximamente: nuevos diseños de Word, exportación a PDF y más opciones de personalización.</p>
+            </div>
+          </div>
+          <div class="info-slide" id="infoSlide1">
+            <div class="info-card">
+              <h3>Actualización 1</h3>
+              <ul>
+                <li>Ahora puedes subir imágenes de forma mucho más sencilla y directa.</li>
+                <li>Se agregó un botón para limpiar la selección rápidamente.</li>
+                <li>Antes, si recargabas la página, perdías todo lo que habías hecho. Eso ya no pasa: la información se conserva.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="info-slide" id="infoSlide2">
+            <div class="info-card">
+              <h3>Actualización 2</h3>
+              <ul>
+                <li>Se incorporó la opción de recortar imágenes antes de agregarlas al reporte.</li>
+                <li>Ahora puedes mover imágenes entre casillas o eliminarlas fácilmente.</li>
+                <li>La carga de imágenes es mucho más rápida y estable.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="info-slide" id="infoSlide3">
+            <div class="info-card">
+              <h3>Actualización 3</h3>
+              <ul>
+                <li>Nueva herramienta para seleccionar estados con un solo clic.</li>
+                <li>Puedes aplicar el mismo estado a todas las imágenes de una vez.</li>
+                <li>Ahora puedes definir desde qué número empieza la numeración de las imágenes (y se guarda automáticamente).</li>
+                <li>Ya no hay un límite de imágenes: puedes subir tantas como necesites.</li>
+                <li>Se mejoró el diseño visual del grid para que sea más claro y ordenado.</li>
+              </ul>
+            </div>
+          </div>
+          <button class="info-arrow right" id="infoNextBtn" title="Siguiente" aria-label="Siguiente">&#62;</button>
+        </div>
+        <div class="info-dots" id="infoDots"></div>
+      </div>
+    </div>
+    <script src="script.js"></script>
+    <script>
+(function(){
+  var infoBtn = document.getElementById('infoBtn');
+  var infoModal = document.getElementById('infoModal');
+  var closeBtn = document.getElementById('closeInfoBtn');
+  var prevBtn, nextBtn, dots;
+  var current = 0;
+  var slides;
+
+  function getSlides() {
+    // Solo selecciona slides hijos directos de .info-slider para evitar problemas de anidación
+    var slider = document.querySelector('.info-slider');
+    return Array.from(slider.querySelectorAll('.info-slide'));
+  }
+
+  function showSlide(n) {
+    slides.forEach((slide, i) => {
+      slide.classList.toggle('active', i === n);
+    });
+    current = n;
+    if (prevBtn && nextBtn) {
+      prevBtn.disabled = (n === 0);
+      nextBtn.disabled = (n === slides.length - 1);
+    }
+    if (dots) {
+      dots.querySelectorAll('.dot').forEach((dot, i) => {
+        dot.classList.toggle('active', i === n);
+      });
+    }
+  }
+
+  function goPrev() {
+    if (current > 0) showSlide(current - 1);
+  }
+  function goNext() {
+    if (current < slides.length - 1) showSlide(current + 1);
+  }
+
+  function setupArrows() {
+    prevBtn = document.getElementById('infoPrevBtn');
+    nextBtn = document.getElementById('infoNextBtn');
+    if (prevBtn && nextBtn) {
+      prevBtn.onclick = goPrev;
+      nextBtn.onclick = goNext;
+    }
+  }
+
+  function setupDots() {
+    dots = document.getElementById('infoDots');
+    if (dots) {
+      dots.innerHTML = '';
+      slides.forEach((_, i) => {
+        var dot = document.createElement('span');
+        dot.className = 'dot' + (i === 0 ? ' active' : '');
+        dot.addEventListener('click', function(){ showSlide(i); });
+        dots.appendChild(dot);
+      });
+    }
+  }
+
+  if(infoBtn && infoModal) {
+    infoBtn.addEventListener('click', function() {
+      infoModal.style.display = 'flex';
+      setTimeout(function(){
+        slides = getSlides();
+        setupArrows();
+        setupDots();
+        showSlide(0);
+      }, 50);
+    });
+  }
+  if(closeBtn && infoModal) {
+    closeBtn.addEventListener('click', function() {
+      infoModal.style.display = 'none';
+    });
+  }
+  window.addEventListener('click', function(e){
+    if(e.target === infoModal) infoModal.style.display = 'none';
+  });
+})();
+    </script>
+  </body>
+</html>
