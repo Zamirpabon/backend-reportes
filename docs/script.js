@@ -1532,22 +1532,92 @@ window.addEventListener('DOMContentLoaded', forceInfoArrowsVisible);
 // Llamar al cambiar tamaño de pantalla
 window.addEventListener('resize', forceInfoArrowsVisible);
 
-// --- Cropper: función para abrir el cropper con la imagen seleccionada ---
-function openCropper(idx) {
-    croppingIdx = idx;
-    cropperRotation = 0;
-    cropperImg = new window.Image();
-    cropperImg.onload = function() {
-        drawCropperImage();
-        cropStart = null;
-        cropEnd = null;
-        cropperModal.style.display = 'flex';
-        updateConfirmRotateBtn();
-    };
-    cropperImg.src = imagesData[idx].src;
+// --- UI y lógica para manejo de sesiones ---
+function addSessionControls() {
+    const controls = document.createElement('div');
+    controls.id = 'sessionControls';
+    controls.style = 'margin: 18px 0; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;';
+    controls.innerHTML = `
+        <input id="sessionNameInput" type="text" placeholder="Nombre de sesión" style="padding:4px 10px;border-radius:8px;border:1.5px solid #aaa;max-width:180px;" />
+        <button id="saveSessionBtn">Guardar sesión en BD</button>
+        <button id="loadSessionBtn">Cargar sesión</button>
+        <select id="sessionList" style="min-width:140px;"></select>
+        <button id="deleteSessionBtn">Borrar sesión</button>
+        <button id="clearSessionsBtn">Limpiar BD</button>
+    `;
+    document.body.insertBefore(controls, document.body.firstChild);
+
+    document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
+    document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
+    document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
+    document.getElementById('clearSessionsBtn').onclick = clearAllSessions;
+    loadSessionList();
 }
 
-// Hacer accesible la función desde el scope global
-window.showImageViewModal = function(idx) {
-    openCropper(idx);
+async function saveSessionToDB() {
+    const name = document.getElementById('sessionNameInput').value.trim();
+    if (!name) return alert('Escribe un nombre para la sesión');
+    // Sincronizar descripciones/estados actuales
+    syncDescriptionsFromDOM();
+    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
+        imageData: imageData || src,
+        description,
+        status,
+        createdAt: createdAt || new Date()
+    }));
+    await fetch(`${API_BASE_URL}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, images })
+    });
+    await loadSessionList();
+    alert('Sesión guardada');
 }
+
+async function loadSessionList() {
+    const res = await fetch(`${API_BASE_URL}/sessions`);
+    const sessions = await res.json();
+    const select = document.getElementById('sessionList');
+    select.innerHTML = '';
+    sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.name;
+        opt.textContent = `${s.name} (${new Date(s.createdAt).toLocaleString()})`;
+        select.appendChild(opt);
+    });
+}
+
+async function loadSessionFromDB() {
+    const select = document.getElementById('sessionList');
+    const name = select.value;
+    if (!name) return alert('Selecciona una sesión');
+    const res = await fetch(`${API_BASE_URL}/session/${name}`);
+    if (!res.ok) return alert('No se pudo cargar la sesión');
+    const session = await res.json();
+    imagesData = session.images.map(img => ({ ...img, src: img.imageData }));
+    imageCount = imagesData.length;
+    imageStartNumber = 1;
+    renderGrid();
+    updateImageCounter();
+    alert('Sesión cargada');
+}
+
+async function deleteSessionFromDB() {
+    const select = document.getElementById('sessionList');
+    const name = select.value;
+    if (!name) return alert('Selecciona una sesión');
+    if (!confirm('¿Seguro que quieres borrar esta sesión?')) return;
+    await fetch(`${API_BASE_URL}/session/${name}`, { method: 'DELETE' });
+    await loadSessionList();
+    alert('Sesión borrada');
+}
+
+async function clearAllSessions() {
+    if (!confirm('¿Seguro que quieres borrar TODAS las sesiones?')) return;
+    await fetch(`${API_BASE_URL}/sessions`, { method: 'DELETE' });
+    await loadSessionList();
+    alert('Todas las sesiones han sido borradas');
+}
+
+// Llama esto al cargar la página
+window.addEventListener('DOMContentLoaded', addSessionControls);

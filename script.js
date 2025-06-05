@@ -1369,185 +1369,92 @@ document.addEventListener('drop', function(e) {
     }
 });
 
-// --- Selección rápida de estado ---
-let quickStateMode = false;
-let quickStateValue = '';
-let quickStateBar = null;
-
-function createQuickStateBar() {
-    if (quickStateBar) quickStateBar.remove();
-    quickStateBar = document.createElement('div');
-    quickStateBar.id = 'quickStateBar';
-    quickStateBar.innerHTML = `
-      <div class="quick-state-bar-card">
-        <div class="quick-state-bar-title">Selecciona un estado</div>
-        <div class="quick-state-bar-btns">
-          <button class="quick-state-btn" data-state="verde" title="Buen estado">🟢</button>
-          <button class="quick-state-btn" data-state="amarillo" title="Observaciones">🟡</button>
-          <button class="quick-state-btn" data-state="rojo" title="No conformidad">🔴</button>
-          <button class="quick-state-btn select-all-btn" id="quickStateSelectAllBtn" title="Aplicar a todas" style="margin-left:18px;font-size:1.1rem;padding:8px 18px;background:#eaf6ff;color:#2980b9;border:2px solid #2980b9;">Seleccionar todo</button>
-        </div>
-        <button id="exitQuickStateBtn" title="Salir del modo rápido" class="quick-state-exit">✕</button>
-      </div>
+// --- UI y lógica para manejo de sesiones ---
+function addSessionControls() {
+    const controls = document.createElement('div');
+    controls.id = 'sessionControls';
+    controls.style = 'margin: 18px 0; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;';
+    controls.innerHTML = `
+        <input id="sessionNameInput" type="text" placeholder="Nombre de sesión" style="padding:4px 10px;border-radius:8px;border:1.5px solid #aaa;max-width:180px;" />
+        <button id="saveSessionBtn">Guardar sesión en BD</button>
+        <button id="loadSessionBtn">Cargar sesión</button>
+        <select id="sessionList" style="min-width:140px;"></select>
+        <button id="deleteSessionBtn">Borrar sesión</button>
+        <button id="clearSessionsBtn">Limpiar BD</button>
     `;
-    quickStateBar.style.pointerEvents = 'none';
-    quickStateBar.querySelector('.quick-state-bar-card').style.pointerEvents = 'auto';
-    document.body.appendChild(quickStateBar);
-    // Eventos
-    quickStateBar.querySelectorAll('.quick-state-btn').forEach(btn => {
-        if (btn.classList.contains('select-all-btn')) return; // skip select all for this
-        btn.onclick = function() {
-            quickStateValue = this.getAttribute('data-state');
-            quickStateBar.querySelectorAll('.quick-state-btn').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            document.body.classList.add('quick-state-active');
-        };
-    });
-    document.getElementById('exitQuickStateBtn').onclick = exitQuickStateMode;
-    // Nuevo: seleccionar todo
-    document.getElementById('quickStateSelectAllBtn').onclick = function() {
-        if (!quickStateValue) {
-            alert('Primero selecciona un estado (color) para aplicar a todas las imágenes.');
-            return;
-        }
-        imagesData.forEach((img, idx) => {
-            img.status = quickStateValue;
-        });
-        // Actualizar visualmente todos los selects
-        document.querySelectorAll('.image-box').forEach(box => {
-            const select = box.querySelector('select.status-select');
-            if (select) {
-                select.value = quickStateValue;
-                select.classList.remove('status-verde', 'status-amarillo', 'status-rojo');
-                if (quickStateValue === 'verde') select.classList.add('status-verde');
-                if (quickStateValue === 'amarillo') select.classList.add('status-amarillo');
-                if (quickStateValue === 'rojo') select.classList.add('status-rojo');
-            }
-            box.classList.add('quick-state-anim');
-            setTimeout(() => box.classList.remove('quick-state-anim'), 400);
-        });
-        updateImageCounter();
-        saveSession();
-    };
+    document.body.insertBefore(controls, document.body.firstChild);
+
+    document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
+    document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
+    document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
+    document.getElementById('clearSessionsBtn').onclick = clearAllSessions;
+    loadSessionList();
 }
 
-function enterQuickStateMode() {
-    quickStateMode = true;
-    quickStateValue = '';
-    createQuickStateBar();
-    document.body.classList.add('quick-state-mode');
-    // Feedback visual en las tarjetas
-    document.querySelectorAll('.image-box').forEach(box => {
-        box.classList.add('quick-state-pointer');
-        box.addEventListener('click', quickStateCardHandler, { capture: true });
+async function saveSessionToDB() {
+    const name = document.getElementById('sessionNameInput').value.trim();
+    if (!name) return alert('Escribe un nombre para la sesión');
+    // Sincronizar descripciones/estados actuales
+    syncDescriptionsFromDOM();
+    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
+        imageData: imageData || src,
+        description,
+        status,
+        createdAt: createdAt || new Date()
+    }));
+    await fetch(`${API_BASE_URL}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, images })
     });
-    // ESC para salir
-    document.addEventListener('keydown', quickStateEscHandler);
+    await loadSessionList();
+    alert('Sesión guardada');
 }
 
-function exitQuickStateMode() {
-    quickStateMode = false;
-    quickStateValue = '';
-    if (quickStateBar) quickStateBar.remove();
-    document.body.classList.remove('quick-state-mode');
-    document.body.classList.remove('quick-state-active');
-    document.querySelectorAll('.image-box').forEach(box => {
-        box.classList.remove('quick-state-pointer');
-        box.classList.remove('quick-state-anim');
-        box.removeEventListener('click', quickStateCardHandler, { capture: true });
+async function loadSessionList() {
+    const res = await fetch(`${API_BASE_URL}/sessions`);
+    const sessions = await res.json();
+    const select = document.getElementById('sessionList');
+    select.innerHTML = '';
+    sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.name;
+        opt.textContent = `${s.name} (${new Date(s.createdAt).toLocaleString()})`;
+        select.appendChild(opt);
     });
-    document.removeEventListener('keydown', quickStateEscHandler);
 }
 
-function quickStateCardHandler(e) {
-    if (!quickStateMode || !quickStateValue) return;
-    const idx = Number(this.getAttribute('data-index'));
-    imagesData[idx].status = quickStateValue;
-    // Forzar actualización visual solo de la tarjeta (sin re cargar todo el grid)
-    const select = this.querySelector('select.status-select');
-    if (select) {
-        select.value = quickStateValue;
-        // Actualizar estilo visual del select
-        select.classList.remove('status-verde', 'status-amarillo', 'status-rojo');
-        if (quickStateValue === 'verde') select.classList.add('status-verde');
-        if (quickStateValue === 'amarillo') select.classList.add('status-amarillo');
-        if (quickStateValue === 'rojo') select.classList.add('status-rojo');
-    }
-    // Animación feedback
-    this.classList.add('quick-state-anim');
-    setTimeout(() => this.classList.remove('quick-state-anim'), 400);
+async function loadSessionFromDB() {
+    const select = document.getElementById('sessionList');
+    const name = select.value;
+    if (!name) return alert('Selecciona una sesión');
+    const res = await fetch(`${API_BASE_URL}/session/${name}`);
+    if (!res.ok) return alert('No se pudo cargar la sesión');
+    const session = await res.json();
+    imagesData = session.images.map(img => ({ ...img, src: img.imageData }));
+    imageCount = imagesData.length;
+    imageStartNumber = 1;
+    renderGrid();
     updateImageCounter();
-    saveSession();
-    e.stopPropagation();
-    e.preventDefault();
-    // Permitir seguir seleccionando más imágenes (NO salir del modo)
+    alert('Sesión cargada');
 }
 
-function quickStateEscHandler(e) {
-    if (e.key === 'Escape') exitQuickStateMode();
+async function deleteSessionFromDB() {
+    const select = document.getElementById('sessionList');
+    const name = select.value;
+    if (!name) return alert('Selecciona una sesión');
+    if (!confirm('¿Seguro que quieres borrar esta sesión?')) return;
+    await fetch(`${API_BASE_URL}/session/${name}`, { method: 'DELETE' });
+    await loadSessionList();
+    alert('Sesión borrada');
 }
 
-// --- Estilos visuales para selección rápida ---
-const quickStateStyle = document.createElement('style');
-quickStateStyle.innerHTML = `
-.quick-state-pointer { cursor: pointer !important; box-shadow: 0 0 0 3px #27ae6066 !important; transition: box-shadow 0.2s; }
-.quick-state-active .image-box.quick-state-pointer:hover { box-shadow: 0 0 0 5px #27ae60cc, 0 0 24px #27ae6033 !important; }
-.quick-state-anim { animation: quickStatePulse 0.4s; }
-@keyframes quickStatePulse { 0% { box-shadow: 0 0 0 0 #27ae60cc; } 60% { box-shadow: 0 0 0 12px #27ae6033; } 100% { box-shadow: 0 0 0 0 #27ae60cc; } }
-#quickStateBar .quick-state-btn.active { outline: 3px solid #2980b9; filter: brightness(1.08); }
-#quickStateBar .quick-state-btn { font-size:1rem; padding:8px 18px; border-radius:8px; border:none; font-weight:bold; cursor:pointer; transition:box-shadow 0.2s,filter 0.2s; box-shadow:0 2px 8px #0001; }
-#quickStateBar { animation: fadeInScale 0.3s; }
-`;
-document.head.appendChild(quickStateStyle);
-
-// --- Mantener imágenes y estados tras recargar la página ---
-window.addEventListener('DOMContentLoaded', () => {
-    loadSession();
-});
-
-// --- RESPONSIVE: mostrar/ocultar flechas al cambiar tamaño de pantalla ---
-window.addEventListener('resize', function() {
-    const prevBtn = document.getElementById('infoPrevBtn');
-    const nextBtn = document.getElementById('infoNextBtn');
-    if (prevBtn && nextBtn) {
-        prevBtn.style.display = 'flex';
-        nextBtn.style.display = 'flex';
-    }
-});
-
-// --- FORZAR visibilidad de flechas del modal info SIEMPRE (PC y móvil) ---
-function forceInfoArrowsVisible() {
-    const prevBtn = document.getElementById('infoPrevBtn');
-    const nextBtn = document.getElementById('infoNextBtn');
-    if (prevBtn) prevBtn.style.display = 'flex';
-    if (nextBtn) nextBtn.style.display = 'flex';
-}
-// Llamar al abrir el modal info
-const infoBtn = document.getElementById('infoBtn');
-if (infoBtn) {
-    infoBtn.addEventListener('click', forceInfoArrowsVisible);
-}
-// Llamar también al cargar la página (por si el modal ya está visible)
-window.addEventListener('DOMContentLoaded', forceInfoArrowsVisible);
-// Llamar al cambiar tamaño de pantalla
-window.addEventListener('resize', forceInfoArrowsVisible);
-
-// --- Cropper: función para abrir el cropper con la imagen seleccionada ---
-function openCropper(idx) {
-    croppingIdx = idx;
-    cropperRotation = 0;
-    cropperImg = new window.Image();
-    cropperImg.onload = function() {
-        drawCropperImage();
-        cropStart = null;
-        cropEnd = null;
-        cropperModal.style.display = 'flex';
-        updateConfirmRotateBtn();
-    };
-    cropperImg.src = imagesData[idx].src;
+async function clearAllSessions() {
+    if (!confirm('¿Seguro que quieres borrar TODAS las sesiones?')) return;
+    await fetch(`${API_BASE_URL}/sessions`, { method: 'DELETE' });
+    await loadSessionList();
+    alert('Todas las sesiones han sido borradas');
 }
 
-// Hacer accesible la función desde el scope global
-window.showImageViewModal = function(idx) {
-    openCropper(idx);
-}
+// Llama esto al cargar la página
+window.addEventListener('DOMContentLoaded', addSessionControls);
