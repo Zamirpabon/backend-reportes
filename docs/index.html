@@ -7,8 +7,393 @@
     <script src="index.umd.js"></script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="info-modal.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        /* --- CSS HEADER MODERNO DE SESIONES --- */
+        .session-header {
+            position: relative;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            background-size: 300% 300%;
+            animation: gradientFlow 12s ease infinite;
+            padding: 20px 24px;
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            overflow: hidden;
+        }
+        @keyframes gradientFlow {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+        .session-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            animation: patternMove 20s linear infinite;
+        }
+        @keyframes patternMove {
+            0% { transform: translateX(0) translateY(0); }
+            100% { transform: translateX(60px) translateY(60px); }
+        }
+        .header-content {
+            position: relative;
+            z-index: 2;
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 32px;
+            align-items: center;
+        }
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .logo-text {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        .session-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            padding: 12px 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        .input-wrapper {
+            position: relative;
+            min-width: 200px;
+        }
+        .session-input {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            color: #2d3748;
+        }
+        .session-input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.8);
+            background: white;
+            box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.2);
+            transform: scale(1.02);
+        }
+        .session-input::placeholder {
+            color: #718096;
+            font-weight: 400;
+        }
+        .select-wrapper {
+            position: relative;
+            min-width: 180px;
+        }
+        .session-select {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            color: #2d3748;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23718096'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 16px;
+            padding-right: 40px;
+        }
+        .session-select:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.8);
+            background: white;
+            box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.2);
+        }
+        .action-buttons {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+        }
+        .btn:active {
+            transform: translateY(-1px);
+        }
+        .btn-save {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        .btn-load {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        .btn-delete {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+        .btn-more {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+        }
+        .btn-more:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .dropdown {
+            position: relative;
+        }
+        .dropdown-content {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 8px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+            min-width: 180px;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dropdown:hover .dropdown-content {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .dropdown-item {
+            padding: 12px 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #374151;
+            font-size: 0.875rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .dropdown-item:hover {
+            background: #f8fafc;
+            color: #667eea;
+        }
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        /* Responsive Design */
+        @media (max-width: 1024px) {
+            .header-content {
+                grid-template-columns: auto 1fr;
+                gap: 24px;
+            }
+            .status-indicator {
+                display: none;
+            }
+        }
+        @media (max-width: 768px) {
+            .session-header {
+                padding: 16px 20px;
+            }
+            .header-content {
+                grid-template-columns: 1fr;
+                gap: 16px;
+                text-align: center;
+            }
+            .logo-section {
+                justify-content: center;
+            }
+            .session-controls {
+                flex-wrap: wrap;
+                justify-content: center;
+                padding: 16px;
+                gap: 12px;
+            }
+            .input-wrapper,
+            .select-wrapper {
+                min-width: 160px;
+                flex: 1;
+            }
+            .action-buttons {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            .btn {
+                padding: 8px 12px;
+                font-size: 0.8rem;
+            }
+        }
+        @media (max-width: 480px) {
+            .session-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .input-wrapper,
+            .select-wrapper {
+                min-width: auto;
+            }
+            .action-buttons {
+                justify-content: space-between;
+            }
+            .btn {
+                flex: 1;
+                padding: 10px 8px;
+            }
+        }
+        /* Floating particles effect */
+        .particles {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; z-index: 1;
+        }
+        .particle {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            animation: float 15s infinite linear;
+        }
+        .particle:nth-child(1) { width: 4px; height: 4px; left: 10%; animation-delay: 0s; }
+        .particle:nth-child(2) { width: 6px; height: 6px; left: 20%; animation-delay: 2s; }
+        .particle:nth-child(3) { width: 3px; height: 3px; left: 30%; animation-delay: 4s; }
+        .particle:nth-child(4) { width: 5px; height: 5px; left: 40%; animation-delay: 6s; }
+        .particle:nth-child(5) { width: 4px; height: 4px; left: 50%; animation-delay: 8s; }
+        .particle:nth-child(6) { width: 3px; height: 3px; left: 60%; animation-delay: 10s; }
+        .particle:nth-child(7) { width: 6px; height: 6px; left: 70%; animation-delay: 12s; }
+        .particle:nth-child(8) { width: 4px; height: 4px; left: 80%; animation-delay: 14s; }
+        @keyframes float {
+            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+        }
+    </style>
 </head>
 <body>
+    <!-- HEADER MODERNO DE SESIONES (reemplaza controles previos) -->
+    <header class="session-header">
+        <div class="particles">
+            <div class="particle"></div>
+            <div class="particle"></div>
+            <div class="particle"></div>
+            <div class="particle"></div>
+            <div class="particle"></div>
+            <div class="particle"></div>
+            <div class="particle"></div>
+            <div class="particle"></div>
+        </div>
+        <div class="header-content">
+            <div class="logo-section">
+                <div class="logo-icon">🎨</div>
+                <div class="logo-text">ImageFlow</div>
+            </div>
+            <div class="session-controls">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="sessionNameInput" 
+                        class="session-input" 
+                        placeholder="Nueva sesión..."
+                    >
+                </div>
+                <div class="select-wrapper">
+                    <select id="sessionList" class="session-select">
+                        <option value="">Seleccionar sesión</option>
+                    </select>
+                </div>
+                <div class="action-buttons">
+                    <button class="btn btn-save" id="saveSessionBtn">
+                        💾 Guardar
+                    </button>
+                    <button class="btn btn-load" id="loadSessionBtn">
+                        📂 Cargar
+                    </button>
+                    <button class="btn btn-delete" id="deleteSessionBtn">
+                        🗑️ Borrar
+                    </button>
+                    <div class="dropdown">
+                        <button class="btn btn-more" id="btn-more">
+                            ⚙️ Más
+                        </button>
+                        <div class="dropdown-content">
+                            <div class="dropdown-item" id="btn-clear-db">
+                                🧹 Limpiar BD
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span>Sistema Activo</span>
+            </div>
+        </div>
+    </header>
+    <!-- FIN HEADER MODERNO DE SESIONES -->
+
     <div class="container">
         <button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?">?</button>
         <div class="header">

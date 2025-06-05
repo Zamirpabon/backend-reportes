@@ -125,26 +125,32 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // --- NUEVO: Configuración para usar backend Node.js + MongoDB ---
-const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://backend-reportes-dm2f.onrender.com';
+// Cambia la URL base según tu despliegue en local o en la nube
+const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://backend-reportes-dm2f.onrender.com'; // <-- URL pública de Render.com
 
-// --- Cargar imágenes desde backend al iniciar ---
-async function loadSession() {
-    try {
-        const res = await fetch(`${API_BASE_URL}/images`);
-        if (!res.ok) throw new Error('No se pudo cargar la sesión');
-        const data = await res.json();
-        imagesData = data.map(img => ({ ...img, src: img.imageData }));
-        imageCount = imagesData.length;
-        imageStartNumber = 1;
-        renderGrid();
-        updateImageCounter();
-        generateBtn.disabled = imagesData.length === 0;
-    } catch (err) {
-        imagesData = [];
-        renderGrid();
-        updateImageCounter();
-        generateBtn.disabled = true;
+// --- Reemplazar localStorage por backend ---
+async function saveSession() {
+    // Guardar todas las imágenes (actualizar descripción/estado)
+    for (let img of imagesData) {
+        if (img._id) {
+            await fetch(`${API_BASE_URL}/image/${img._id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description: img.description, status: img.status })
+            });
+        }
     }
+}
+
+async function loadSession() {
+    const res = await fetch(`${API_BASE_URL}/images`);
+    const data = await res.json();
+    // Asignar imageData como src para cada imagen
+    imagesData = data.map(img => ({ ...img, src: img.imageData }));
+    imageCount = imagesData.length;
+    imageStartNumber = 1;
+    renderGrid();
+    if (imagesData.length > 0) generateBtn.disabled = false;
 }
 
 // --- Subir imágenes al backend ---
@@ -153,6 +159,7 @@ async function handleImageUpload(event) {
     if (files.length === 0) return;
     loadingText.style.display = 'block';
     progressFill.style.width = '0%';
+    let newImages = [];
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         // Leer archivo como base64
@@ -163,25 +170,40 @@ async function handleImageUpload(event) {
             reader.readAsDataURL(file);
         });
         // Enviar al backend como JSON
-        await fetch(`${API_BASE_URL}/upload`, {
+        const res = await fetch(`${API_BASE_URL}/upload`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ imageData: base64, description: '', status: '' })
         });
+        const img = await res.json();
+        // Usar imageData como src para mostrar
+        img.src = img.imageData;
+        newImages.push(img);
         progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
     }
-    await loadSession();
+    await loadSession(); // <-- Recargar desde backend
+    renderGrid();
     loadingText.style.display = 'none';
+    generateBtn.disabled = imagesData.length === 0;
+    saveSession();
+    updateImageCounter();
 }
 
 // --- Eliminar imagen en backend ---
 window.removeImage = async function(idx, event) {
     event.stopPropagation();
     const img = imagesData[idx];
-    if (img && img._id) {
+    if (img._id) {
         await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
     }
-    await loadSession();
+    // imagesData.splice(idx, 1);
+    await loadSession(); // <-- Recargar desde backend
+    renderGrid();
+    if (imagesData.length === 0) {
+        generateBtn.disabled = true;
+    }
+    updateImageCounter();
+    saveSession();
 };
 
 // --- Actualizar descripción/estado en backend ---
@@ -196,6 +218,7 @@ window.updateImageData = async function(idx, field, value) {
         });
     }
     updateImageCounter();
+    saveSession();
 };
 
 // --- Al cargar la página, cargar imágenes desde backend ---
@@ -1347,114 +1370,88 @@ document.addEventListener('drop', function(e) {
 });
 
 // --- UI y lógica para manejo de sesiones ---
+// Elimina el header de controles de sesión clásico si existe
+function removeOldSessionControls() {
+    const old = document.getElementById('sessionControls');
+    if (old) old.remove();
+}
+
 function addSessionControls() {
-    // Elimina controles previos si existen
-    const prev = document.getElementById('sessionHeader');
-    if (prev) prev.remove();
-
-    // Header principal, debajo del título del reporte
-    const mainTitle = document.querySelector('h1, .main-title');
-    const header = document.createElement('section');
-    header.id = 'sessionHeader';
-    header.style = `
-        width: 100vw;
-        max-width: 100vw;
-        background: #f8fafc;
-        box-shadow: 0 2px 16px #3498db22;
-        padding: 18px 0 10px 0;
-        margin: 0 auto 24px auto;
-        border-radius: 0 0 32px 32px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        z-index: 100;
-    `;
-    header.innerHTML = `
-        <div style="width:100%;max-width:700px;display:flex;flex-direction:row;align-items:flex-end;gap:24px;margin:0 auto;flex-wrap:wrap;justify-content:center;">
-            <div style="display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:220px;">
-                <label style="font-weight:bold;color:#3498db;font-size:1.08rem;">Nombre de sesión</label>
-                <input id="sessionNameInput" type="text" placeholder="Nombre de sesión" style="padding:10px 18px;border-radius:10px;border:2px solid #3498db;max-width:220px;font-size:1.13rem;outline:none;transition:box-shadow .2s;box-shadow:0 1px 8px #3498db33;background:#fff;color:#217dbb;font-weight:bold;" />
-            </div>
-            <div style="display:flex;flex-direction:column;gap:6px;align-items:center;">
-                <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
-                    <button id="saveSessionBtn" class="session-btn">Guardar sesión en BD</button>
-                    <button id="saveToActiveSessionBtn" class="session-btn" style="display:none;">Guardar en esta misma sesión</button>
-                    <button id="loadSessionBtn" class="session-btn">Cargar sesión</button>
-                </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:center;">
-                    <select id="sessionList" style="min-width:180px;padding:9px 12px;border-radius:8px;border:2px solid #3498db;font-size:1.09rem;background:#fff;color:#217dbb;font-weight:bold;outline:none;"></select>
-                    <button id="deleteSessionBtn" class="session-btn">Borrar sesión</button>
-                    <button id="clearSessionsBtn" class="session-btn">Limpiar BD</button>
-                </div>
-            </div>
-            <span id="activeSessionLabel" style="margin-left:18px;font-weight:bold;color:#3498db;font-size:1.13rem;text-shadow:0 1px 8px #3498db33;"></span>
-        </div>
-    `;
-    if (mainTitle && mainTitle.parentNode) {
-        mainTitle.parentNode.insertBefore(header, mainTitle.nextSibling);
-    } else {
-        document.body.insertBefore(header, document.body.firstChild);
-    }
-
-    // Estilos para los botones (solo una vez)
-    if (!document.getElementById('sessionBtnStyles')) {
-        const style = document.createElement('style');
-        style.id = 'sessionBtnStyles';
-        style.textContent = `
-        .session-btn {
-            background: linear-gradient(90deg,#217dbb 60%,#4ec6e6 100%);
-            color: #fff;
-            border: none;
-            border-radius: 10px;
-            padding: 10px 22px;
-            font-size: 1.09rem;
-            font-weight: 700;
-            box-shadow: 0 2px 12px #3498db22;
-            cursor: pointer;
-            transition: background .18s, transform .12s, box-shadow .18s;
-            margin-bottom: 2px;
-        }
-        .session-btn:hover {
-            background: linear-gradient(90deg,#3498db 60%,#6dd5fa 100%);
-            transform: translateY(-2px) scale(1.04);
-            box-shadow: 0 4px 18px #3498db33;
-        }
-        #sessionHeader input:focus, #sessionHeader select:focus {
-            box-shadow: 0 0 0 2.5px #3498db55;
-            border-color: #6dd5fa;
-        }
-        .session-btn-highlight {
-            outline: 2.5px solid #27ae60;
-            box-shadow: 0 0 0 4px #27ae6022;
-        }
-        @media (max-width: 900px) {
-            #sessionHeader > div { flex-direction: column; align-items: stretch; gap: 12px; }
-        }
-        `;
-        document.head.appendChild(style);
-    }
-
+    removeOldSessionControls(); // Asegura que no se duplique
+    // Ya no se crea el bloque, solo enlaza eventos a los nuevos controles visuales
     document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
-    document.getElementById('saveToActiveSessionBtn').onclick = saveChangesToActiveSession;
     document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
     document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
-    document.getElementById('clearSessionsBtn').onclick = clearAllSessions;
+    document.getElementById('clearSessionsBtn')?.remove(); // Elimina si existe el viejo
+    // El nuevo botón limpiar BD está en el dropdown
+    document.getElementById('btn-clear-db').onclick = clearAllSessions;
     loadSessionList();
-    updateActiveSessionUI();
 }
 
-let activeSessionName = null;
-
-function updateActiveSessionUI() {
-    const label = document.getElementById('activeSessionLabel');
-    const saveToActiveBtn = document.getElementById('saveToActiveSessionBtn');
-    if (activeSessionName) {
-        label.textContent = `Sesión activa: ${activeSessionName}`;
-        saveToActiveBtn.style.display = '';
-    } else {
-        label.textContent = '';
-        saveToActiveBtn.style.display = 'none';
-    }
+async function saveSessionToDB() {
+    const name = document.getElementById('sessionNameInput').value.trim();
+    if (!name) return alert('Escribe un nombre para la sesión');
+    // Sincronizar descripciones/estados actuales
+    syncDescriptionsFromDOM();
+    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
+        imageData: imageData || src,
+        description,
+        status,
+        createdAt: createdAt || new Date()
+    }));
+    await fetch(`${API_BASE_URL}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, images })
+    });
+    await loadSessionList();
+    alert('Sesión guardada');
 }
 
+async function loadSessionList() {
+    const res = await fetch(`${API_BASE_URL}/sessions`);
+    const sessions = await res.json();
+    const select = document.getElementById('sessionList');
+    select.innerHTML = '';
+    sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.name;
+        opt.textContent = `${s.name} (${new Date(s.createdAt).toLocaleString()})`;
+        select.appendChild(opt);
+    });
+}
+
+async function loadSessionFromDB() {
+    const select = document.getElementById('sessionList');
+    const name = select.value;
+    if (!name) return alert('Selecciona una sesión');
+    const res = await fetch(`${API_BASE_URL}/session/${name}`);
+    if (!res.ok) return alert('No se pudo cargar la sesión');
+    const session = await res.json();
+    imagesData = session.images.map(img => ({ ...img, src: img.imageData }));
+    imageCount = imagesData.length;
+    imageStartNumber = 1;
+    renderGrid();
+    updateImageCounter();
+    alert('Sesión cargada');
+}
+
+async function deleteSessionFromDB() {
+    const select = document.getElementById('sessionList');
+    const name = select.value;
+    if (!name) return alert('Selecciona una sesión');
+    if (!confirm('¿Seguro que quieres borrar esta sesión?')) return;
+    await fetch(`${API_BASE_URL}/session/${name}`, { method: 'DELETE' });
+    await loadSessionList();
+    alert('Sesión borrada');
+}
+
+async function clearAllSessions() {
+    if (!confirm('¿Seguro que quieres borrar TODAS las sesiones?')) return;
+    await fetch(`${API_BASE_URL}/sessions`, { method: 'DELETE' });
+    await loadSessionList();
+    alert('Todas las sesiones han sido borradas');
+}
+
+// Llama esto al cargar la página
 window.addEventListener('DOMContentLoaded', addSessionControls);
