@@ -176,17 +176,24 @@ async function handleImageUpload(event) {
             body: JSON.stringify({ imageData: base64, description: '', status: '' })
         });
         const img = await res.json();
-        // Usar imageData como src para mostrar
         img.src = img.imageData;
         newImages.push(img);
         progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
     }
-    await loadSession(); // <-- Recargar desde backend
+    await loadSession();
     renderGrid();
     loadingText.style.display = 'none';
     generateBtn.disabled = imagesData.length === 0;
     saveSession();
     updateImageCounter();
+    // Si hay sesión activa, sugerir guardar cambios en la misma sesión
+    if (typeof activeSessionName === 'string' && activeSessionName) {
+        const addBtn = document.getElementById('addToSessionBtn');
+        if (addBtn) {
+            addBtn.classList.add('session-btn-highlight');
+            setTimeout(() => addBtn.classList.remove('session-btn-highlight'), 1200);
+        }
+    }
 }
 
 // --- Eliminar imagen en backend ---
@@ -1373,28 +1380,101 @@ document.addEventListener('drop', function(e) {
 function addSessionControls() {
     const controls = document.createElement('div');
     controls.id = 'sessionControls';
-    controls.style = 'margin: 18px 0; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;';
+    controls.style = `
+        margin: 24px auto 18px auto;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        background: #f8fafc;
+        border-radius: 18px;
+        box-shadow: 0 2px 16px #0001;
+        padding: 18px 20px 12px 20px;
+        max-width: 700px;
+    `;
     controls.innerHTML = `
-        <input id="sessionNameInput" type="text" placeholder="Nombre de sesión" style="padding:4px 10px;border-radius:8px;border:1.5px solid #aaa;max-width:180px;" />
-        <button id="saveSessionBtn">Guardar sesión en BD</button>
-        <button id="loadSessionBtn">Cargar sesión</button>
-        <select id="sessionList" style="min-width:140px;"></select>
-        <button id="deleteSessionBtn">Borrar sesión</button>
-        <button id="clearSessionsBtn">Limpiar BD</button>
+        <input id="sessionNameInput" type="text" placeholder="Nombre de sesión" style="padding:8px 16px;border-radius:10px;border:2px solid #3498db;max-width:180px;font-size:1.08rem;outline:none;transition:box-shadow .2s;box-shadow:0 1px 6px #3498db22;" />
+        <button id="saveSessionBtn" class="session-btn">Guardar sesión en BD</button>
+        <button id="addToSessionBtn" class="session-btn" style="display:none;">Guardar cambios en sesión</button>
+        <button id="loadSessionBtn" class="session-btn">Cargar sesión</button>
+        <select id="sessionList" style="min-width:160px;padding:7px 10px;border-radius:8px;border:2px solid #aaa;font-size:1.05rem;background:#fff;outline:none;"></select>
+        <button id="deleteSessionBtn" class="session-btn">Borrar sesión</button>
+        <button id="clearSessionsBtn" class="session-btn">Limpiar BD</button>
+        <span id="activeSessionLabel" style="margin-left:18px;font-weight:bold;color:#3498db;font-size:1.08rem;"></span>
     `;
     document.body.insertBefore(controls, document.body.firstChild);
 
+    // Estilos para los botones
+    const style = document.createElement('style');
+    style.textContent = `
+    .session-btn {
+        background: linear-gradient(90deg,#3498db 60%,#6dd5fa 100%);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 18px;
+        font-size: 1.07rem;
+        font-weight: 600;
+        box-shadow: 0 2px 8px #3498db22;
+        cursor: pointer;
+        transition: background .18s, transform .12s;
+        margin-bottom: 4px;
+    }
+    .session-btn:hover {
+        background: linear-gradient(90deg,#217dbb 60%,#4ec6e6 100%);
+        transform: translateY(-2px) scale(1.04);
+    }
+    #sessionControls input:focus {
+        box-shadow: 0 0 0 2px #3498db55;
+        border-color: #217dbb;
+    }
+    #sessionControls select:focus {
+        border-color: #3498db;
+    }
+    .session-btn-highlight {
+        background: linear-gradient(90deg,#f39c12 60%,#f7d774 100%) !important;
+        color: #222 !important;
+        box-shadow: 0 0 0 3px #f7d77499;
+        animation: pulseBtn 0.7s 2;
+    }
+    @keyframes pulseBtn {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.08); }
+        100% { transform: scale(1); }
+    }
+    `;
+    document.head.appendChild(style);
+
     document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
+    document.getElementById('addToSessionBtn').onclick = saveChangesToActiveSession;
     document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
     document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
     document.getElementById('clearSessionsBtn').onclick = clearAllSessions;
     loadSessionList();
+    updateActiveSessionUI();
+}
+
+let activeSessionName = null;
+
+function updateActiveSessionUI() {
+    const label = document.getElementById('activeSessionLabel');
+    const addBtn = document.getElementById('addToSessionBtn');
+    const saveBtn = document.getElementById('saveSessionBtn');
+    if (activeSessionName) {
+        label.textContent = `Sesión activa: ${activeSessionName}`;
+        addBtn.style.display = '';
+        saveBtn.style.display = 'none';
+    } else {
+        label.textContent = '';
+        addBtn.style.display = 'none';
+        saveBtn.style.display = '';
+    }
 }
 
 async function saveSessionToDB() {
     const name = document.getElementById('sessionNameInput').value.trim();
     if (!name) return alert('Escribe un nombre para la sesión');
-    // Sincronizar descripciones/estados actuales
     syncDescriptionsFromDOM();
     const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
         imageData: imageData || src,
@@ -1407,8 +1487,28 @@ async function saveSessionToDB() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, images })
     });
+    activeSessionName = name;
     await loadSessionList();
+    updateActiveSessionUI();
     alert('Sesión guardada');
+}
+
+async function saveChangesToActiveSession() {
+    if (!activeSessionName) return alert('No hay sesión activa');
+    syncDescriptionsFromDOM();
+    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
+        imageData: imageData || src,
+        description,
+        status,
+        createdAt: createdAt || new Date()
+    }));
+    await fetch(`${API_BASE_URL}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: activeSessionName, images })
+    });
+    await loadSessionList();
+    alert('Cambios guardados en la sesión activa');
 }
 
 async function loadSessionList() {
@@ -1434,9 +1534,11 @@ async function loadSessionFromDB() {
     imagesData = session.images.map(img => ({ ...img, src: img.imageData }));
     imageCount = imagesData.length;
     imageStartNumber = 1;
+    activeSessionName = name;
     renderGrid();
     updateImageCounter();
-    alert('Sesión cargada');
+    updateActiveSessionUI();
+    alert('Sesión cargada. Puedes agregar imágenes y luego guardar cambios en la misma sesión.');
 }
 
 async function deleteSessionFromDB() {
@@ -1445,16 +1547,17 @@ async function deleteSessionFromDB() {
     if (!name) return alert('Selecciona una sesión');
     if (!confirm('¿Seguro que quieres borrar esta sesión?')) return;
     await fetch(`${API_BASE_URL}/session/${name}`, { method: 'DELETE' });
+    if (activeSessionName === name) activeSessionName = null;
     await loadSessionList();
+    updateActiveSessionUI();
     alert('Sesión borrada');
 }
 
 async function clearAllSessions() {
     if (!confirm('¿Seguro que quieres borrar TODAS las sesiones?')) return;
     await fetch(`${API_BASE_URL}/sessions`, { method: 'DELETE' });
+    activeSessionName = null;
     await loadSessionList();
+    updateActiveSessionUI();
     alert('Todas las sesiones han sido borradas');
 }
-
-// Llama esto al cargar la página
-window.addEventListener('DOMContentLoaded', addSessionControls);
