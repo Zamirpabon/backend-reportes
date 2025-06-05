@@ -181,11 +181,12 @@ async function handleImageUpload(event) {
         newImages.push(img);
         progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
     }
-    // imagesData.push(...newImages);
     await loadSession(); // <-- Recargar desde backend
     renderGrid();
     loadingText.style.display = 'none';
     generateBtn.disabled = imagesData.length === 0;
+    saveSession();
+    updateImageCounter();
 }
 
 // --- Eliminar imagen en backend ---
