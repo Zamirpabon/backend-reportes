@@ -28,7 +28,7 @@ window.addEventListener('DOMContentLoaded', () => {
             }
             imagesData = [];
             imageStartNumber = 1; // Reinicia el número inicial
-            saveSession();
+            await loadSession(); // <-- Recargar desde backend
             renderGrid();
             updateImageCounter();
             generateBtn.disabled = true;
@@ -181,7 +181,8 @@ async function handleImageUpload(event) {
         newImages.push(img);
         progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
     }
-    imagesData.push(...newImages);
+    // imagesData.push(...newImages);
+    await loadSession(); // <-- Recargar desde backend
     renderGrid();
     loadingText.style.display = 'none';
     generateBtn.disabled = imagesData.length === 0;
@@ -194,7 +195,8 @@ window.removeImage = async function(idx, event) {
     if (img._id) {
         await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
     }
-    imagesData.splice(idx, 1);
+    // imagesData.splice(idx, 1);
+    await loadSession(); // <-- Recargar desde backend
     renderGrid();
     if (imagesData.length === 0) {
         generateBtn.disabled = true;
