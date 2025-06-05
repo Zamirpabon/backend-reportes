@@ -13,115 +13,8 @@ input.addEventListener('change', handleImageUpload);
 
 window.addEventListener('DOMContentLoaded', () => {
     loadSession();
-    const generateBtn = document.getElementById('generateBtn');
-    if (generateBtn) generateBtn.onclick = generateWord;
-
-    // Asignar evento al botón Limpiar si existe
-    const clearBtn = document.getElementById('clearBtn');
-    if (clearBtn) {
-        clearBtn.onclick = async function() {
-            // Eliminar todas las imágenes del backend
-            for (let img of imagesData) {
-                if (img._id) {
-                    await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
-                }
-            }
-            imagesData = [];
-            imageStartNumber = 1; // Reinicia el número inicial
-            await loadSession(); // <-- Recargar desde backend
-            renderGrid();
-            updateImageCounter();
-            generateBtn.disabled = true;
-            // Limpiar barra de progreso y texto de carga
-            if (progressFill) progressFill.style.width = '0%';
-            if (loadingText) loadingText.style.display = 'none';
-        };
-    }
-
-    // Crear modal de visualización si no existe
-    if (!document.getElementById('imageViewModal')) {
-        const modal = document.createElement('div');
-        modal.id = 'imageViewModal';
-        modal.style.display = 'none';
-        modal.style.position = 'fixed';
-        modal.style.top = '0';
-        modal.style.left = '0';
-        modal.style.width = '100vw';
-        modal.style.height = '100vh';
-        modal.style.background = 'rgba(0,0,0,0.8)';
-        modal.style.zIndex = '99999';
-        modal.style.justifyContent = 'center';
-        modal.style.alignItems = 'center';
-        modal.innerHTML = `<img id="imageViewImg" style="max-width:90vw;max-height:90vh;border:8px solid #fff;border-radius:12px;box-shadow:0 0 32px #000;">`;
-        modal.onclick = () => { modal.style.display = 'none'; };
-        document.body.appendChild(modal);
-    }
-    imageViewModal = document.getElementById('imageViewModal');
-    imageViewImg = document.getElementById('imageViewImg');
-
-    // Mostrar modal de info al hacer click en el botón de interrogación
-    const infoBtn = document.getElementById('infoBtn');
-    const infoModal = document.getElementById('infoModal');
-    const closeInfoBtn = document.getElementById('closeInfoBtn');
-    if (infoBtn && infoModal) {
-        infoBtn.onclick = function() {
-            infoModal.style.display = 'flex';
-            setTimeout(() => {
-                // --- FLECHAS SIEMPRE VISIBLES EN TODAS LAS RESOLUCIONES ---
-                const prevBtn = document.getElementById('infoPrevBtn');
-                const nextBtn = document.getElementById('infoNextBtn');
-                if (prevBtn && nextBtn) {
-                    prevBtn.style.display = 'flex';
-                    nextBtn.style.display = 'flex';
-                }
-                // Swipe táctil en móvil (opcional, pero flechas SIEMPRE visibles)
-                const slider = document.querySelector('.info-slider');
-                let startX = null;
-                let moved = false;
-                if (slider) {
-                    slider.ontouchstart = function(e) {
-                        if (e.touches.length === 1) {
-                            startX = e.touches[0].clientX;
-                            moved = false;
-                        }
-                    };
-                    slider.ontouchmove = function(e) {
-                        if (startX !== null && e.touches.length === 1) {
-                            const dx = e.touches[0].clientX - startX;
-                            if (Math.abs(dx) > 30) moved = true;
-                        }
-                    };
-                    slider.ontouchend = function(e) {
-                        if (startX !== null && moved) {
-                            const endX = e.changedTouches[0].clientX;
-                            const dx = endX - startX;
-                            if (dx > 40) {
-                                if (typeof goPrev === 'function') goPrev();
-                            } else if (dx < -40) {
-                                if (typeof goNext === 'function') goNext();
-                            }
-                        }
-                        startX = null;
-                        moved = false;
-                    };
-                }
-            }, 100);
-        };
-    }
-    if (closeInfoBtn && infoModal) {
-        closeInfoBtn.onclick = function() {
-            infoModal.style.display = 'none';
-        };
-    }
-
-    // Evento para el botón de selección rápida
-    const quickBtn = document.getElementById('quickStateBtn');
-    if (quickBtn) {
-        quickBtn.onclick = function() {
-            if (!quickStateMode) enterQuickStateMode();
-        };
-    }
-    updateImageCounter(); // <-- Asegura que el input y el contador se sincronicen tras cargar sesión
+    updateImageCounter();
+    addSessionControls(); // <-- Ensure session controls are initialized
 });
 
 // --- NUEVO: Configuración para usar backend Node.js + MongoDB ---
@@ -176,7 +69,6 @@ async function handleImageUpload(event) {
             body: JSON.stringify({ imageData: base64, description: '', status: '' })
         });
         const img = await res.json();
-        // Usar imageData como src para mostrar
         img.src = img.imageData;
         newImages.push(img);
         progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
@@ -185,7 +77,7 @@ async function handleImageUpload(event) {
     renderGrid();
     loadingText.style.display = 'none';
     generateBtn.disabled = imagesData.length === 0;
-    saveSession();
+    await saveSession(); // <-- Asegura que la sesión seleccionada se actualiza
     updateImageCounter();
 }
 
@@ -383,6 +275,12 @@ function renderGrid() {
         imageData.index = imageStartNumber + idx;
         createImageBox(imageData, idx);
     });
+    updateImageCounter(); // <-- Siempre actualiza el contador tras renderizar
+    saveSession(); // <-- Guarda la sesión tras cualquier cambio visual
+    // --- NUEVO: Si está en modo selección rápida, re-aplicar handlers ---
+    if (window.quickStateMode) {
+        applyQuickStateHandlers();
+    }
 }
 
 function createImageBox(imageData, idx) {
@@ -391,8 +289,7 @@ function createImageBox(imageData, idx) {
     div.setAttribute('draggable', 'true');
     div.setAttribute('data-index', idx);
     div.addEventListener('dragstart', function(e) {
-        isInternalDrag = true; // Marcar drag interno
-        handleDragStart.call(this, e);
+        isInternalDrag = true;        handleDragStart.call(this, e);
     });
     div.addEventListener('dragover', handleDragOver);
     div.addEventListener('dragleave', handleDragLeave);
@@ -422,13 +319,12 @@ function createImageBox(imageData, idx) {
         handleDrop.call(this, e);
     });
     div.addEventListener('dragend', function(e) {
-        isInternalDrag = false; // Fin del drag interno
-        handleDragEnd.call(this, e);
+        isInternalDrag = false;        handleDragEnd.call(this, e);
     });
     div.innerHTML = `
     <button class="remove-image-btn" title="Eliminar imagen" onclick="removeImage(${idx}, event)">×</button>
     <div class="image-container" style="position:relative;">
-        <img src="${imageData.src}" alt="Imagen ${imageData.index}" style="cursor:zoom-in;" onclick="showImageViewModal(${idx})" />
+        <img src="${imageData.src}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger" data-idx="${idx}" />
     </div>
     <div class="image-label-desc-row">
         <div class="image-label">Imagen ${imageData.index}:</div>
@@ -443,6 +339,11 @@ function createImageBox(imageData, idx) {
     </select>
     <div class="drop-indicator"></div>
     `;
+    // Solo abrir cropper si se hace click en la imagen, no en textarea ni select
+    div.querySelector('.img-cropper-trigger').onclick = function(e) {
+        if (!window.quickStateMode) showImageCropper(idx);
+        e.stopPropagation();
+    };
     grid.appendChild(div);
 }
 
@@ -1370,28 +1271,9 @@ document.addEventListener('drop', function(e) {
 });
 
 // --- UI y lógica para manejo de sesiones ---
-// Elimina el header de controles de sesión clásico si existe
-function removeOldSessionControls() {
-    const old = document.getElementById('sessionControls');
-    if (old) old.remove();
-}
-
-function addSessionControls() {
-    removeOldSessionControls(); // Asegura que no se duplique
-    // Ya no se crea el bloque, solo enlaza eventos a los nuevos controles visuales
-    document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
-    document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
-    document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
-    document.getElementById('clearSessionsBtn')?.remove(); // Elimina si existe el viejo
-    // El nuevo botón limpiar BD está en el dropdown
-    document.getElementById('btn-clear-db').onclick = clearAllSessions;
-    loadSessionList();
-}
-
 async function saveSessionToDB() {
     const name = document.getElementById('sessionNameInput').value.trim();
     if (!name) return alert('Escribe un nombre para la sesión');
-    // Sincronizar descripciones/estados actuales
     syncDescriptionsFromDOM();
     const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
         imageData: imageData || src,
@@ -1453,5 +1335,327 @@ async function clearAllSessions() {
     alert('Todas las sesiones han sido borradas');
 }
 
-// Llama esto al cargar la página
-window.addEventListener('DOMContentLoaded', addSessionControls);
+function removeOldSessionControls() {
+    const old = document.getElementById('sessionControls');
+    if (old) old.remove();
+}
+
+function addSessionControls() {
+    removeOldSessionControls();
+    document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
+    document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
+    document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
+    document.getElementById('btn-clear-db').onclick = clearAllSessions;
+    loadSessionList();
+}
+
+// Evento para el botón de selección rápida
+const quickBtn = document.getElementById('quickStateBtn');
+if (quickBtn) {
+    quickBtn.onclick = function() {
+        if (!window.quickStateMode) enterQuickStateMode();
+    };
+}
+
+// --- Limpiar imágenes (botón Limpiar) ---
+const clearBtn = document.getElementById('clearBtn');
+if (clearBtn) {
+    clearBtn.onclick = async function() {
+        for (let img of imagesData) {
+            if (img._id) {
+                await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
+            }
+        }
+        imagesData = [];
+        imageStartNumber = 1;
+        await loadSession();
+        renderGrid();
+        updateImageCounter();
+        generateBtn.disabled = true;
+        if (progressFill) progressFill.style.width = '0%';
+        if (loadingText) loadingText.style.display = 'none';
+    };
+}
+
+// --- Lógica para selección rápida de estado ---
+window.quickStateMode = false;
+
+// --- Modern Quick State Banner ---
+function showQuickStateBanner() {
+    // Eliminar banners previos
+    let oldBanner = document.getElementById('quickStateBanner');
+    if (oldBanner) oldBanner.remove();
+    let oldOverlay = document.getElementById('quickStateOverlay');
+    if (oldOverlay) oldOverlay.remove();
+
+    // Overlay: permite interacción con imágenes (pointer-events: none fuera del banner)
+    const overlay = document.createElement('div');
+    overlay.id = 'quickStateOverlay';
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.background = 'rgba(44,62,80,0.18)';
+    overlay.style.zIndex = '10010';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'flex-start';
+    overlay.style.justifyContent = 'center';
+    document.body.appendChild(overlay);
+
+    // Banner: contiene los botones de selección rápida
+    const banner = document.createElement('div');
+    banner.id = 'quickStateBanner';
+    banner.style.position = 'relative';
+    banner.style.marginTop = '60px';
+    banner.style.background = '#fff'; // Fondo blanco sólido
+    banner.style.color = '#222';
+    banner.style.fontWeight = 'bold';
+    banner.style.fontSize = '1.18rem';
+    banner.style.padding = '28px 38px 22px 38px';
+    banner.style.borderRadius = '22px';
+    banner.style.boxShadow = '0 8px 32px #0002';
+    banner.style.zIndex = '10011';
+    banner.style.display = 'flex';
+    banner.style.flexDirection = 'column';
+    banner.style.alignItems = 'center';
+    banner.style.animation = 'slideDownQuickState 0.35s cubic-bezier(.7,1.6,.5,1)';
+    banner.style.pointerEvents = 'auto'; // El banner sí recibe eventos
+    banner.innerHTML = `
+      <button id="quickStateCloseBtn" style="position:absolute;top:14px;right:18px;background:none;border:none;font-size:1.7rem;color:#888;cursor:pointer;z-index:2;transition:color 0.2s;" title="Salir">×</button>
+      <div style="font-size:1.15rem;font-weight:bold;margin-bottom:18px;letter-spacing:0.5px;display:flex;align-items:center;gap:10px;">
+        <span style="color:#2980b9;font-size:1.5rem;">⚡</span> Selección rápida de estado
+      </div>
+      <div style="display:flex;gap:22px;margin-bottom:18px;">
+        <button class="quick-state-btn" id="quickStateVerde" title="Buen estado" style="background:#27ae60;"><span>🟢</span></button>
+        <button class="quick-state-btn" id="quickStateAmarillo" title="Observación" style="background:#f1c40f;color:#222;"><span>🟡</span></button>
+        <button class="quick-state-btn" id="quickStateRojo" title="No conformidad" style="background:#e74c3c;"><span>🔴</span></button>
+        <button class="quick-state-btn" id="quickStateClear" title="Limpiar estado" style="background:#bdc3c7;color:#222;"><span>❌</span></button>
+      </div>
+      <div style="display:flex;gap:18px;align-items:center;">
+        <button id="quickStateSelectAll" class="generate-btn" style="background:#2980b9;color:#fff;font-size:1.05rem;padding:8px 22px;border-radius:12px;">Seleccionar todo</button>
+      </div>
+    `;
+    // El banner debe estar por encima y sí recibir eventos
+    banner.onclick = function(e) { e.stopPropagation(); };
+    overlay.appendChild(banner);
+
+    // Inyectar CSS solo una vez
+    if (!document.getElementById('quickStateBannerCSS')) {
+        const css = document.createElement('style');
+        css.id = 'quickStateBannerCSS';
+        css.innerHTML = `
+        @keyframes slideDownQuickState {0%{opacity:0;transform:translateY(-40px);}100%{opacity:1;transform:translateY(0);}}
+        .quick-state-btn {
+          width: 64px; height: 64px; border-radius: 50%; border: none; font-size: 2.1rem;
+          display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px #0001;
+          cursor: pointer; transition: box-shadow 0.2s, transform 0.2s, outline 0.2s;
+          outline: 3px solid transparent; font-weight: bold;
+        }
+        .quick-state-btn.selected, .quick-state-btn:focus {
+          outline: 3px solid #222;
+          box-shadow: 0 4px 18px #0002;
+          transform: scale(1.08);
+        }
+        .quick-state-btn:hover {
+          box-shadow: 0 6px 24px #0002;
+          transform: scale(1.10);
+        }
+        #quickStateCloseBtn:hover { color: #e74c3c; }
+        `;
+        document.head.appendChild(css);
+    }
+
+    // Estado seleccionado para aplicar con "Seleccionar todo" o clic en imágenes
+    window.quickStateSelected = null;
+    function highlightBtn(state) {
+        ['Verde','Amarillo','Rojo','Clear'].forEach(s => {
+            let btn = document.getElementById('quickState'+s);
+            if (btn) btn.classList.toggle('selected', state === s.toLowerCase());
+        });
+    }
+    document.getElementById('quickStateVerde').onclick = function(e) {
+        window.quickStateSelected = 'verde';
+        highlightBtn('verde');
+    };
+    document.getElementById('quickStateAmarillo').onclick = function(e) {
+        window.quickStateSelected = 'amarillo';
+        highlightBtn('amarillo');
+    };
+    document.getElementById('quickStateRojo').onclick = function(e) {
+        window.quickStateSelected = 'rojo';
+        highlightBtn('rojo');
+    };
+    document.getElementById('quickStateClear').onclick = function(e) {
+        window.quickStateSelected = '';
+        highlightBtn('clear');
+    };
+    document.getElementById('quickStateSelectAll').onclick = function(e) {
+        if (window.quickStateSelected === null) return;
+        imagesData.forEach(img => img.status = window.quickStateSelected);
+        updateImageCounter();
+        saveSession();
+        renderGrid();
+    };
+    // Solo la X cierra el banner
+    document.getElementById('quickStateCloseBtn').onclick = function(e) {
+        e.stopPropagation();
+        exitQuickStateMode(e);
+    };
+
+    // Permitir cerrar haciendo click fuera del banner
+    overlay.addEventListener('mousedown', function(e) {
+        if (e.target === overlay) exitQuickStateMode(e);
+    });
+}
+
+// Ocultar banner y overlay
+function hideQuickStateBanner() {
+    let banner = document.getElementById('quickStateBanner');
+    if (banner) banner.remove();
+    let overlay = document.getElementById('quickStateOverlay');
+    if (overlay) overlay.remove();
+}
+
+function enterQuickStateMode() {
+    window.quickStateMode = true;
+    document.body.classList.add('quick-state-mode');
+    applyQuickStateHandlers();
+    setTimeout(showQuickStateBanner, 10);
+}
+
+function exitQuickStateMode(e) {
+    if (e && e.target && e.target.closest && e.target.closest('#quickStateBanner')) return;
+    window.quickStateMode = false;
+    document.body.classList.remove('quick-state-mode');
+    document.querySelectorAll('.image-box').forEach((box, idx) => {
+        box.classList.remove('quick-select');
+        const img = box.querySelector('.img-cropper-trigger');
+        if (img) img.onclick = function(e) { showImageCropper(idx); e.stopPropagation(); };
+    });
+    document.body.onclick = null;
+    hideQuickStateBanner();
+}
+
+function applyQuickStateHandlers() {
+    document.querySelectorAll('.image-box').forEach((box, idx) => {
+        box.classList.add('quick-select');
+        // Eliminar cualquier handler previo
+        box.onclick = null;
+        const img = box.querySelector('.img-cropper-trigger');
+        if (img) {
+            img.onclick = function(e) {
+                e.stopPropagation();
+                if (window.quickStateSelected === null) return;
+                // Actualizar estado en datos
+                imagesData[idx].status = window.quickStateSelected;
+                // Actualizar borde visualmente
+                if (window.quickStateSelected === 'verde') {
+                    box.style.border = '3px solid #27ae60';
+                } else if (window.quickStateSelected === 'amarillo') {
+                    box.style.border = '3px solid #f1c40f';
+                } else if (window.quickStateSelected === 'rojo') {
+                    box.style.border = '3px solid #e74c3c';
+                } else {
+                    box.style.border = '2px solid #ecf0f1';
+                }
+                updateImageCounter();
+                saveSession();
+            };
+        }
+        // Visual feedback inicial
+        if (imagesData[idx].status === 'verde') {
+            box.style.border = '3px solid #27ae60';
+        } else if (imagesData[idx].status === 'amarillo') {
+            box.style.border = '3px solid #f1c40f';
+        } else if (imagesData[idx].status === 'rojo') {
+            box.style.border = '3px solid #e74c3c';
+        } else {
+            box.style.border = '2px solid #ecf0f1';
+        }
+    });
+    // No cerrar modo rápido al hacer click fuera
+    document.body.onclick = null;
+}
+
+// --- Drag & Drop global: mejorar experiencia de carga ---
+document.addEventListener('dragenter', function(e) {
+    if (e.dataTransfer && e.dataTransfer.types.includes('Files') && !isInternalDrag) {
+        e.preventDefault();
+        e.stopPropagation();
+        showGlobalDropOverlay();
+    }
+}, true);
+
+document.addEventListener('dragleave', function(e) {
+    if (e.dataTransfer && e.dataTransfer.types.includes('Files') && !isInternalDrag) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideGlobalDropOverlay();
+    }
+}, true);
+
+document.addEventListener('dragover', function(e) {
+    if (e.dataTransfer && e.dataTransfer.types.includes('Files') && !isInternalDrag) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+}, true);
+
+document.addEventListener('drop', function(e) {
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0 && !isInternalDrag) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideGlobalDropOverlay();
+        const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+        if (files.length > 0) {
+            handleImageUpload({ target: { files } });
+        }
+    }
+}, true);
+
+// --- UI: mejorar visibilidad de botones y estados ---
+const style2 = document.createElement('style');
+style2.innerHTML = `
+.generate-btn {
+  background: #3498db;
+  color: #fff;
+  font-weight: bold;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s, transform 0.3s;
+}
+.generate-btn:hover {
+  background: #2980b9;
+  transform: translateY(-2px);
+}
+.generate-btn:active {
+  transform: translateY(1px);
+}
+.image-box {
+  transition: transform 0.3s, box-shadow 0.3s;
+}
+.image-box.quick-select {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+.status-select {
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-weight: bold;
+  background: #ecf0f1;
+  transition: background 0.3s, transform 0.3s;
+}
+.status-select:hover {
+  background: #bdc3c7;
+  transform: translateY(-2px);
+}
+.status-select:active {
+  transform: translateY(1px);
+}
+`;
+document.head.appendChild(style2);
+
+// --- Fin de script ---
