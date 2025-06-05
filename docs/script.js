@@ -1659,3 +1659,29 @@ style2.innerHTML = `
 document.head.appendChild(style2);
 
 // --- Fin de script ---
+window.saveChangesToCurrentSession = async function() {
+    const select = document.getElementById('sessionList');
+    const name = select && select.value ? select.value.trim() : null;
+    if (!name) {
+        alert('Selecciona una sesión para guardar los cambios.');
+        return;
+    }
+    syncDescriptionsFromDOM && syncDescriptionsFromDOM();
+    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
+        imageData: imageData || src,
+        description,
+        status,
+        createdAt: createdAt || new Date()
+    }));
+    try {
+        await fetch(`${API_BASE_URL}/session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, images })
+        });
+        alert('¡Cambios guardados en la sesión "' + name + '"!');
+        await loadSessionList && loadSessionList();
+    } catch (e) {
+        alert('Error al guardar los cambios en la sesión.');
+    }
+};

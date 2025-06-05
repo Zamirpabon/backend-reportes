@@ -11,14 +11,19 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         /* --- CSS HEADER MODERNO DE SESIONES --- */
         .session-header {
-            position: relative;
+            position: sticky;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            z-index: 10000;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
             background-size: 300% 300%;
             animation: gradientFlow 12s ease infinite;
-            padding: 12px 4vw 12px 4vw;
+            padding: 24px 4vw 24px 4vw;
             box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
             border-bottom: 1px solid rgba(255, 255, 255, 0.2);
             overflow: hidden;
+            min-height: 120px;
         }
         @keyframes gradientFlow {
             0%, 100% { background-position: 0% 50%; }
@@ -68,6 +73,30 @@
         .session-input, .session-select {
             width: 100%;
             min-width: 0;
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 2px solid #764ba2;
+            background: #fff;
+            color: #764ba2;
+            font-size: 1rem;
+            font-family: inherit;
+            font-weight: 500;
+            box-shadow: 0 2px 8px rgba(118,75,162,0.08);
+            transition: border 0.2s, box-shadow 0.2s;
+            outline: none;
+        }
+        .session-input:focus, .session-select:focus {
+            border-color: #f093fb;
+            box-shadow: 0 0 0 2px #f093fb33;
+        }
+        .session-select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%23764ba2" height="20" viewBox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"><path d="M7.293 7.293a1 1 0 011.414 0L10 8.586l1.293-1.293a1 1 0 111.414 1.414l-2 2a1 1 0 01-1.414 0l-2-2a1 1 0 010-1.414z"/></svg>');
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 18px 18px;
         }
         .action-buttons {
             display: flex;
@@ -116,12 +145,15 @@
         }
         .btn-more {
             background: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            backdrop-filter: blur(10px);
+            color: #764ba2;
+            border: 2px solid #764ba2;
+            font-weight: bold;
+            box-shadow: 0 2px 8px rgba(118, 75, 162, 0.10);
         }
         .btn-more:hover {
-            background: rgba(255, 255, 255, 0.3);
+            background: #764ba2;
+            color: #fff;
+            border-color: #764ba2;
         }
         .dropdown {
             position: relative;
@@ -169,14 +201,19 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            color: rgba(255, 255, 255, 0.9);
-            font-size: 0.85rem;
-            font-weight: 500;
+            color: #764ba2;
+            background: #fff;
+            border-radius: 10px;
+            border: 2px solid #764ba2;
+            padding: 6px 16px;
+            font-size: 0.95rem;
+            font-weight: 600;
             min-width: 110px;
+            box-shadow: 0 2px 8px rgba(118, 75, 162, 0.10);
         }
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             background: #10b981;
             border-radius: 50%;
             animation: pulse 2s infinite;
@@ -193,7 +230,8 @@
         }
         @media (max-width: 768px) {
             .session-header {
-                padding: 8px 2vw;
+                padding: 32px 2vw 32px 2vw;
+                min-height: 180px;
             }
             .header-content, .session-controls {
                 max-width: 100vw;
@@ -211,22 +249,55 @@
                 justify-content: center;
             }
         }
+        @media (max-width: 600px) {
+          .session-controls {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+          .session-controls > div,
+          .session-controls-row1,
+          .session-controls-row2 {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+            display: flex !important;
+          }
+          .input-wrapper, .select-wrapper {
+            max-width: 100% !important;
+            min-width: 0 !important;
+            width: 100% !important;
+          }
+          .btn, .session-input, .session-select {
+            width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
+          .action-buttons, .session-controls > div > div {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+            display: flex !important;
+          }
+          .status-indicator {
+            margin-left: 0 !important;
+            justify-content: center !important;
+          }
+        }
         @media (max-width: 480px) {
             .session-header {
-                padding: 4px 0;
+                padding: 40px 0 40px 0;
+                min-height: 220px;
             }
-            .session-controls {
-                padding: 8px 2px;
-            }
-            .input-wrapper, .select-wrapper {
-                min-width: 90px;
-                max-width: 100vw;
-            }
-            .btn {
-                flex: 1 1 80px;
-                min-width: 80px;
-                padding: 8px 4px;
-            }
+        }
+        .container {
+            /* Siempre debajo del header, nunca se superpone */
+            margin-top: 0;
+            padding-top: var(--header-height, 140px) !important;
         }
         /* Floating particles effect */
         .particles {
@@ -253,66 +324,70 @@
             90% { opacity: 1; }
             100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
         }
+        body {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        .container {
+            margin-top: 0;
+            padding-top: 24px;
+        }
     </style>
 </head>
 <body>
     <!-- HEADER MODERNO DE SESIONES (ajustado, sin logo, responsive mejorado) -->
-    <header class="session-header">
-        <div class="particles">
-            <div class="particle"></div>
-            <div class="particle"></div>
-            <div class="particle"></div>
-            <div class="particle"></div>
-            <div class="particle"></div>
-            <div class="particle"></div>
-            <div class="particle"></div>
-            <div class="particle"></div>
-        </div>
-        <div class="header-content" style="max-width:900px;">
-            <div class="session-controls" style="width:100%;justify-content:center;">
-                <div class="input-wrapper" style="flex:1;min-width:120px;max-width:220px;">
-                    <input 
-                        type="text" 
-                        id="sessionNameInput" 
-                        class="session-input" 
-                        placeholder="Nueva sesión..."
-                    >
-                </div>
-                <div class="select-wrapper" style="flex:1;min-width:120px;max-width:220px;">
-                    <select id="sessionList" class="session-select">
-                        <option value="">Seleccionar sesión</option>
-                    </select>
-                </div>
-                <div class="action-buttons" style="flex-wrap:wrap;gap:8px;">
-                    <button class="btn btn-save" id="saveSessionBtn">💾 Guardar</button>
-                    <button class="btn btn-load" id="loadSessionBtn">📂 Cargar</button>
-                    <button class="btn btn-delete" id="deleteSessionBtn">🗑️ Borrar</button>
-                    <button class="btn btn-more" id="btn-clear-db">🧹 Eliminar Base de Datos</button>
-                </div>
-                <div class="status-indicator" style="margin-left:12px;min-width:110px;">
-                    <div class="status-dot"></div>
-                    <span>Sistema Activo</span>
-                </div>
-            </div>
-        </div>
-    </header>
+    <header class="session-header" style="display:none;"></header>
     <!-- FIN HEADER MODERNO DE SESIONES -->
 
     <div class="container">
-        <button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?">?</button>
         <div class="header">
-            <h1 style="font-family: Tahoma, Arial, sans-serif;">REPORTE FOTOGRÁFICO DE INSPECCIÓN</h1>
-            <div class="convenciones-block">
+            <h1 style="font-family: Tahoma, Arial, sans-serif; text-align:center;">REPORTE FOTOGRÁFICO DE INSPECCIÓN</h1>
+            <div class="convenciones-block" style="margin:0 auto; text-align:center;">
                 <div class="convenciones-titulo">Convenciones:</div>
-                <div class="convenciones-list">
+                <div class="convenciones-list" style="justify-content:center;">
                     <div class="convencion-item"><img src="verde.png.jpg" class="estado-icono" alt="Verde" /> Buen estado</div>
                     <div class="convencion-item"><img src="amarillo.png.avif" class="estado-icono" alt="Amarillo" /> Observaciones de mejora</div>
                     <div class="convencion-item"><img src="rojo.png.avif" class="estado-icono" alt="Rojo" /> No conformidad. Requiere intervención.</div>
                 </div>
             </div>
         </div>
-
         <div class="upload-section">
+            <div class="card-header-content" style="margin:18px auto 18px auto; display:flex; flex-direction:column; align-items:center; max-width:900px;">
+                <button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?" style="align-self:flex-end; margin-bottom:8px;"></button>
+                <div class="session-controls-embed" style="width:100%; display:flex; justify-content:center;">
+                  <div class="session-controls" style="width:100%; max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:10px; align-items:center;">
+                    <div style="display:flex; width:100%; gap:10px; align-items:flex-end; justify-content:center; flex-wrap:wrap;">
+                      <div class="input-wrapper" style="min-width:120px; max-width:220px; flex:1;">
+                          <input 
+                            type="text" 
+                            id="sessionNameInput" 
+                            class="session-input" 
+                            placeholder="Nueva sesión..."
+                        >
+                      </div>
+                      <div class="select-wrapper" style="min-width:120px; max-width:220px; flex:1;">
+                          <select id="sessionList" class="session-select">
+                            <option value="">Seleccionar sesión</option>
+                          </select>
+                      </div>
+                      <div style="display:flex; gap:8px;">
+                          <button class="btn btn-save" id="saveSessionBtn">💾 Guardar</button>
+                          <button class="btn btn-load" id="loadSessionBtn">📂 Cargar</button>
+                          <button class="btn btn-delete" id="deleteSessionBtn">🗑️ Borrar</button>
+                      </div>
+                    </div>
+                    <div style="display:flex; gap:8px; justify-content:center; margin-top:8px; width:100%;">
+                      <button class="btn btn-more" id="btn-clear-db">🧹 Eliminar Base de Datos</button>
+                      <button class="btn btn-save" id="saveChangesBtn" style="background:linear-gradient(135deg,#f59e42,#f093fb);color:#fff;">💾 Guardar Cambios en esta Sesión</button>
+                      <div class="status-indicator" style="margin-left:12px;min-width:110px;">
+                          <div class="status-dot"></div>
+                          <span>Sistema Activo</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+            </div>
             <div class="upload-section-inner">
                 <div id="imageInputWrapper" class="main-btn">
                     <label for="imageInput">
@@ -491,6 +566,38 @@
   window.addEventListener('click', function(e){
     if(e.target === infoModal) infoModal.style.display = 'none';
   });
+})();
+// --- Ajuste dinámico de padding-top según altura del header ---
+(function(){
+  function setHeaderHeightVar() {
+    var header = document.querySelector('.session-header');
+    var container = document.querySelector('.container');
+    if(header && container) {
+      var height = header.offsetHeight;
+      container.style.setProperty('--header-height', height + 'px');
+    }
+  }
+  window.addEventListener('DOMContentLoaded', setHeaderHeightVar);
+  window.addEventListener('resize', setHeaderHeightVar);
+  // Si hay cambios de contenido en el header (por ejemplo, menú desplegable), observar cambios
+  var header = document.querySelector('.session-header');
+  if(header) {
+    var observer = new MutationObserver(setHeaderHeightVar);
+    observer.observe(header, { childList: true, subtree: true, attributes: true });
+  }
+})();
+
+(function(){
+  var saveChangesBtn = document.getElementById('saveChangesBtn');
+  if(saveChangesBtn) {
+    saveChangesBtn.addEventListener('click', function() {
+      if (window.saveChangesToCurrentSession) {
+        window.saveChangesToCurrentSession();
+      } else {
+        alert('No se pudo guardar los cambios.');
+      }
+    });
+  }
 })();
     </script>
   </body>
