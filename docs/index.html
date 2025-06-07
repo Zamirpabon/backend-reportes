@@ -7,6 +7,7 @@
     <script src="index.umd.js"></script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="info-modal.css">
+    <link rel="stylesheet" href="custom-styles.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         /* --- CSS HEADER MODERNO DE SESIONES --- */
@@ -129,14 +130,18 @@
             transform: translateY(-1px);
         }
         .btn-save {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-        }
-        .btn-load {
-            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8); /* azul */
             color: white;
             box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        .btn-load {
+            background: #f3f4f6; /* gris claro */
+            color: #374151;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.08);
+        }
+        .btn-load:hover {
+            background: #e5e7eb;
+            color: #1d4ed8;
         }
         .btn-delete {
             background: linear-gradient(135deg, #ef4444, #dc2626);
@@ -176,6 +181,7 @@
             visibility: hidden;
             transform: translateY(10px);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-align: center;
         }
         .dropdown:hover .dropdown-content, .dropdown:focus-within .dropdown-content {
             opacity: 1;
@@ -192,6 +198,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            justify-content: center;
         }
         .dropdown-item:hover {
             background: #f8fafc;
@@ -297,7 +304,7 @@
         .container {
             /* Siempre debajo del header, nunca se superpone */
             margin-top: 0;
-            padding-top: var(--header-height, 140px) !important;
+            padding-top: 0 !important;
         }
         /* Floating particles effect */
         .particles {
@@ -336,9 +343,8 @@
     </style>
 </head>
 <body>
-    <!-- HEADER MODERNO DE SESIONES (ajustado, sin logo, responsive mejorado) -->
-    <header class="session-header" style="display:none;"></header>
-    <!-- FIN HEADER MODERNO DE SESIONES -->
+<!-- Botón info flotante arriba a la derecha -->
+<button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;border:none;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.7rem;box-shadow:0 2px 12px #3b82f644;cursor:pointer;position:fixed;top:22px;right:22px;z-index:10001;">?</button>
 
     <div class="container">
         <div class="header">
@@ -354,9 +360,21 @@
         </div>
         <div class="upload-section">
             <div class="card-header-content" style="margin:18px auto 18px auto; display:flex; flex-direction:column; align-items:center; max-width:900px;">
-                <button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?" style="align-self:flex-end; margin-bottom:8px;"></button>
                 <div class="session-controls-embed" style="width:100%; display:flex; justify-content:center;">
                   <div class="session-controls" style="width:100%; max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:10px; align-items:center;">
+                    <div style="display:flex; width:100%; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                      <div class="status-indicator" style="margin-left:0;min-width:110px;">  
+                        <div class="status-dot"></div>
+                        <span>Sistema Activo</span>
+                      </div>
+                      <div class="dropdown session-dropdown" style="position:relative;display:inline-block;">
+                        <button class="btn btn-more" id="optionsMenuBtn" type="button" style="font-size:1.5rem;padding:6px 14px;line-height:1;">⋮</button>
+                        <div class="dropdown-content" id="optionsDropdown" style="position:absolute;top:110%;right:0;min-width:180px;z-index:9999;opacity:0;visibility:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.18); text-align:center;">
+                          <div class="dropdown-item btn-delete" id="menuDeleteSession" style="justify-content:center;">🗑️ Borrar Sesión</div>
+                          <div class="dropdown-item btn-delete" id="menuClearDB" style="justify-content:center;">🧹 Eliminar Base de Datos</div>
+                        </div>
+                      </div>
+                    </div>
                     <div style="display:flex; width:100%; gap:10px; align-items:flex-end; justify-content:center; flex-wrap:wrap;">
                       <div class="input-wrapper" style="min-width:120px; max-width:220px; flex:1;">
                           <input 
@@ -374,16 +392,12 @@
                       <div style="display:flex; gap:8px;">
                           <button class="btn btn-save" id="saveSessionBtn">💾 Guardar</button>
                           <button class="btn btn-load" id="loadSessionBtn">📂 Cargar</button>
-                          <button class="btn btn-delete" id="deleteSessionBtn">🗑️ Borrar</button>
+                          <button class="btn btn-delete" id="deleteSessionBtn" style="display:none;">🗑️ Borrar</button>
                       </div>
                     </div>
                     <div style="display:flex; gap:8px; justify-content:center; margin-top:8px; width:100%;">
-                      <button class="btn btn-more" id="btn-clear-db">🧹 Eliminar Base de Datos</button>
-                      <button class="btn btn-save" id="saveChangesBtn" style="background:linear-gradient(135deg,#f59e42,#f093fb);color:#fff;">💾 Guardar Cambios en esta Sesión</button>
-                      <div class="status-indicator" style="margin-left:12px;min-width:110px;">
-                          <div class="status-dot"></div>
-                          <span>Sistema Activo</span>
-                      </div>
+                      <button class="btn btn-more" id="btn-clear-db" style="display:none;">🧹 Eliminar Base de Datos</button>
+                      <button class="btn btn-save" id="saveChangesBtn" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;width:100%;max-width:100%;flex:1 1 0;text-align:center;justify-content:center;">💾 Guardar Cambios en esta Sesión</button>
                     </div>
                   </div>
                 </div>
@@ -451,33 +465,12 @@
           </div>
           <div class="info-slide" id="infoSlide1">
             <div class="info-card">
-              <h3>Actualización 1</h3>
+              <h3>¿Cómo funciona?</h3>
               <ul>
-                <li>Ahora puedes subir imágenes de forma mucho más sencilla y directa.</li>
-                <li>Se agregó un botón para limpiar la selección rápidamente.</li>
-                <li>Antes, si recargabas la página, perdías todo lo que habías hecho. Eso ya no pasa: la información se conserva.</li>
-              </ul>
-            </div>
-          </div>
-          <div class="info-slide" id="infoSlide2">
-            <div class="info-card">
-              <h3>Actualización 2</h3>
-              <ul>
-                <li>Se incorporó la opción de recortar imágenes antes de agregarlas al reporte.</li>
-                <li>Ahora puedes mover imágenes entre casillas o eliminarlas fácilmente.</li>
-                <li>La carga de imágenes es mucho más rápida y estable.</li>
-              </ul>
-            </div>
-          </div>
-          <div class="info-slide" id="infoSlide3">
-            <div class="info-card">
-              <h3>Actualización 3</h3>
-              <ul>
-                <li>Nueva herramienta para seleccionar estados con un solo clic.</li>
-                <li>Puedes aplicar el mismo estado a todas las imágenes de una vez.</li>
-                <li>Ahora puedes definir desde qué número empieza la numeración de las imágenes (y se guarda automáticamente).</li>
-                <li>Ya no hay un límite de imágenes: puedes subir tantas como necesites.</li>
-                <li>Se mejoró el diseño visual del grid para que sea más claro y ordenado.</li>
+                <li>Sube tus imágenes de inspección.</li>
+                <li>Asigna un estado a cada imagen (verde, amarillo, rojo).</li>
+                <li>Agrega descripciones y ordena las imágenes.</li>
+                <li>Guarda tu sesión y genera el reporte Word.</li>
               </ul>
             </div>
           </div>
@@ -563,28 +556,15 @@
       infoModal.style.display = 'none';
     });
   }
+  // ARREGLO: Permitir cerrar el modal al hacer click fuera del contenido
+  if(infoModal) {
+    infoModal.addEventListener('mousedown', function(e) {
+      if(e.target === infoModal) infoModal.style.display = 'none';
+    });
+  }
   window.addEventListener('click', function(e){
     if(e.target === infoModal) infoModal.style.display = 'none';
   });
-})();
-// --- Ajuste dinámico de padding-top según altura del header ---
-(function(){
-  function setHeaderHeightVar() {
-    var header = document.querySelector('.session-header');
-    var container = document.querySelector('.container');
-    if(header && container) {
-      var height = header.offsetHeight;
-      container.style.setProperty('--header-height', height + 'px');
-    }
-  }
-  window.addEventListener('DOMContentLoaded', setHeaderHeightVar);
-  window.addEventListener('resize', setHeaderHeightVar);
-  // Si hay cambios de contenido en el header (por ejemplo, menú desplegable), observar cambios
-  var header = document.querySelector('.session-header');
-  if(header) {
-    var observer = new MutationObserver(setHeaderHeightVar);
-    observer.observe(header, { childList: true, subtree: true, attributes: true });
-  }
 })();
 
 (function(){
@@ -599,6 +579,71 @@
     });
   }
 })();
+
+document.addEventListener('DOMContentLoaded', function() {
+  function toggleScrollBtns() {
+    const topBtn = document.getElementById('scrollToTopBtn');
+    const bottomBtn = document.getElementById('scrollToBottomBtn');
+    if (!topBtn || !bottomBtn) return;
+    const scrollY = window.scrollY || document.documentElement.scrollTop;
+    const winH = window.innerHeight || document.documentElement.clientHeight;
+    const docH = document.documentElement.scrollHeight;
+    topBtn.style.display = scrollY > 120 ? 'block' : 'none';
+    bottomBtn.style.display = (scrollY + winH < docH - 120) ? 'block' : 'none';
+  }
+  const topBtn = document.getElementById('scrollToTopBtn');
+  const bottomBtn = document.getElementById('scrollToBottomBtn');
+  if (topBtn) {
+    topBtn.onclick = function(){ window.scrollTo({top:0,behavior:'smooth'}); };
+  }
+  if (bottomBtn) {
+    bottomBtn.onclick = function(){ window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); };
+  }
+  window.addEventListener('scroll', toggleScrollBtns);
+  window.addEventListener('resize', toggleScrollBtns);
+  toggleScrollBtns();
+});
     </script>
+    <!-- Botones de scroll rápido -->
+    <button id="scrollToTopBtn" style="position:fixed;bottom:90px;right:18px;z-index:9999;display:none;padding:12px 16px;border-radius:50%;background:#764ba2;color:#fff;font-size:1.5rem;border:none;box-shadow:0 2px 8px #764ba288;cursor:pointer;">↑</button>
+    <button id="scrollToBottomBtn" style="position:fixed;bottom:30px;right:18px;z-index:9999;display:none;padding:12px 16px;border-radius:50%;background:#764ba2;color:#fff;font-size:1.5rem;border:none;box-shadow:0 2px 8px #764ba288;cursor:pointer;">↓</button>
+
+    <script>
+// Dropdown logic SOLO para el menú ⋮ de la fila de controles
+(function(){
+    var btn = document.getElementById('optionsMenuBtn');
+    var dd = document.getElementById('optionsDropdown');
+    if (!btn || !dd) return;
+    btn.onclick = function(e) {
+        e.stopPropagation();
+        if(dd.style.opacity === '1') {
+            dd.style.opacity = '0';
+            dd.style.visibility = 'hidden';
+        } else {
+            dd.style.opacity = '1';
+            dd.style.visibility = 'visible';
+        }
+    };
+    document.addEventListener('click', function(e) {
+        if(dd) { dd.style.opacity = '0'; dd.style.visibility = 'hidden'; }
+    });
+    dd.onclick = function(e) { e.stopPropagation(); };
+    // Enlazar acciones correctas a los ítems del menú
+    var menuDeleteSession = document.getElementById('menuDeleteSession');
+    var menuClearDB = document.getElementById('menuClearDB');
+    if(menuDeleteSession) menuDeleteSession.onclick = function(e) {
+        e.stopPropagation();
+        document.getElementById('deleteSessionBtn').click();
+        dd.style.opacity = '0';
+        dd.style.visibility = 'hidden';
+    };
+    if(menuClearDB) menuClearDB.onclick = function(e) {
+        e.stopPropagation();
+        document.getElementById('btn-clear-db').click();
+        dd.style.opacity = '0';
+        dd.style.visibility = 'hidden';
+    };
+})();
+</script>
   </body>
 </html>

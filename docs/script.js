@@ -15,6 +15,7 @@ window.addEventListener('DOMContentLoaded', () => {
     loadSession();
     updateImageCounter();
     addSessionControls(); // <-- Ensure session controls are initialized
+    setupSessionDropdownMenu();
 });
 
 // --- NUEVO: Configuración para usar backend Node.js + MongoDB ---
@@ -1086,6 +1087,48 @@ if (cropperCanvas) {
         };
         drawCropperImage();
     };
+    // --- SOPORTE TOUCH SOLO EN EL MODAL CROPPER ---
+    cropperCanvas.addEventListener('touchstart', function(e) {
+        if (e.touches.length !== 1) return;
+        updateScale();
+        cropping = true;
+        const rect = cropperCanvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        cropStart = {
+            x: (touch.clientX - rect.left) * scaleX,
+            y: (touch.clientY - rect.top) * scaleY
+        };
+        cropEnd = null;
+        e.preventDefault();
+    }, { passive: false });
+    cropperCanvas.addEventListener('touchmove', function(e) {
+        if (!cropping || !cropStart || e.touches.length !== 1) return;
+        updateScale();
+        const rect = cropperCanvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        cropEnd = {
+            x: (touch.clientX - rect.left) * scaleX,
+            y: (touch.clientY - rect.top) * scaleY
+        };
+        drawCropperImage();
+        e.preventDefault();
+    }, { passive: false });
+    cropperCanvas.addEventListener('touchend', function(e) {
+        if (!cropping || !cropStart) return;
+        updateScale();
+        cropping = false;
+        const rect = cropperCanvas.getBoundingClientRect();
+        // Usar el último touch si existe, si no, usar cropEnd anterior
+        let touch = (e.changedTouches && e.changedTouches[0]) || null;
+        if (touch) {
+            cropEnd = {
+                x: (touch.clientX - rect.left) * scaleX,
+                y: (touch.clientY - rect.top) * scaleY
+            };
+        }
+        drawCropperImage();
+        e.preventDefault();
+    }, { passive: false });
 }
 
 // --- Recorte correcto considerando la rotación ---
@@ -1295,12 +1338,21 @@ async function loadSessionList() {
     const sessions = await res.json();
     const select = document.getElementById('sessionList');
     select.innerHTML = '';
+    // Siempre agrega la opción por defecto al inicio
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'Seleccionar sesión';
+    defaultOpt.selected = true;
+    defaultOpt.disabled = true;
+    select.appendChild(defaultOpt);
     sessions.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s.name;
         opt.textContent = `${s.name} (${new Date(s.createdAt).toLocaleString()})`;
         select.appendChild(opt);
     });
+    // Si no hay sesión seleccionada, deja la opción por defecto
+    select.value = '';
 }
 
 async function loadSessionFromDB() {
@@ -1578,90 +1630,60 @@ function applyQuickStateHandlers() {
     document.body.onclick = null;
 }
 
-// --- Drag & Drop global: mejorar experiencia de carga ---
-document.addEventListener('dragenter', function(e) {
-    if (e.dataTransfer && e.dataTransfer.types.includes('Files') && !isInternalDrag) {
-        e.preventDefault();
+// --- Integración de menú ⋮ con backend ---
+function setupSessionDropdownMenu() {
+    var btn = document.getElementById('optionsMenuBtn');
+    var dd = document.getElementById('optionsDropdown');
+    if (!btn || !dd) return;
+    // Asignar acciones correctas a los ítems del menú
+    var borrarSesion = dd.querySelector('.dropdown-item.btn-delete:nth-child(1)');
+    var borrarDB = dd.querySelector('.dropdown-item.btn-delete:nth-child(2)');
+    if (borrarSesion) borrarSesion.onclick = function(e) {
         e.stopPropagation();
-        showGlobalDropOverlay();
-    }
-}, true);
-
-document.addEventListener('dragleave', function(e) {
-    if (e.dataTransfer && e.dataTransfer.types.includes('Files') && !isInternalDrag) {
-        e.preventDefault();
+        deleteSessionFromDB();
+        dd.style.opacity = '0';
+        dd.style.visibility = 'hidden';
+    };
+    if (borrarDB) borrarDB.onclick = function(e) {
         e.stopPropagation();
-        hideGlobalDropOverlay();
-    }
-}, true);
-
-document.addEventListener('dragover', function(e) {
-    if (e.dataTransfer && e.dataTransfer.types.includes('Files') && !isInternalDrag) {
-        e.preventDefault();
+        clearAllSessions();
+        dd.style.opacity = '0';
+        dd.style.visibility = 'hidden';
+    };
+    // Mostrar/ocultar menú
+    btn.onclick = function(e) {
         e.stopPropagation();
-    }
-}, true);
-
-document.addEventListener('drop', function(e) {
-    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0 && !isInternalDrag) {
-        e.preventDefault();
-        e.stopPropagation();
-        hideGlobalDropOverlay();
-        const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-        if (files.length > 0) {
-            handleImageUpload({ target: { files } });
+        if(dd.style.opacity === '1') {
+            dd.style.opacity = '0';
+            dd.style.visibility = 'hidden';
+        } else {
+            dd.style.opacity = '1';
+            dd.style.visibility = 'visible';
         }
-    }
-}, true);
+    };
+    document.addEventListener('click', function(e) {
+        if(dd) { dd.style.opacity = '0'; dd.style.visibility = 'hidden'; }
+    });
+    dd.onclick = function(e) { e.stopPropagation(); };
+}
 
-// --- UI: mejorar visibilidad de botones y estados ---
-const style2 = document.createElement('style');
-style2.innerHTML = `
-.generate-btn {
-  background: #3498db;
-  color: #fff;
-  font-weight: bold;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.3s, transform 0.3s;
-}
-.generate-btn:hover {
-  background: #2980b9;
-  transform: translateY(-2px);
-}
-.generate-btn:active {
-  transform: translateY(1px);
-}
-.image-box {
-  transition: transform 0.3s, box-shadow 0.3s;
-}
-.image-box.quick-select {
-  transform: scale(1.02);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-}
-.status-select {
-  border-radius: 8px;
-  padding: 4px 8px;
-  font-weight: bold;
-  background: #ecf0f1;
-  transition: background 0.3s, transform 0.3s;
-}
-.status-select:hover {
-  background: #bdc3c7;
-  transform: translateY(-2px);
-}
-.status-select:active {
-  transform: translateY(1px);
-}
-`;
-document.head.appendChild(style2);
+document.addEventListener('DOMContentLoaded', function() {
+    loadSession();
+    updateImageCounter();
+    addSessionControls();
+    setupSessionDropdownMenu();
+});
 
 // --- Fin de script ---
 window.saveChangesToCurrentSession = async function() {
     const select = document.getElementById('sessionList');
     const name = select && select.value ? select.value.trim() : null;
+    // Si hay imágenes nuevas y una sesión seleccionada, advertir antes de guardar
+    if (name && imagesData.length > 0 && input && input.files && input.files.length > 0) {
+        if (!confirm('Tienes imágenes nuevas cargadas y una sesión seleccionada. ¿Seguro que quieres guardar los cambios en esta sesión?')) {
+            return;
+        }
+    }
     if (!name) {
         alert('Selecciona una sesión para guardar los cambios.');
         return;
