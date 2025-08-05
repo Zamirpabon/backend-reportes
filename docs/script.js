@@ -20,7 +20,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // --- NUEVO: Configuración para usar backend Node.js + MongoDB ---
 // Cambia la URL base según tu despliegue en local o en la nube
-const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://backend-reportes-dm2f.onrender.com'; // <-- URL pública de Render.com
+const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://backend-reportes-lzfl.onrender.com'; // <-- URL pública de Render.com
 
 // --- Reemplazar localStorage por backend ---
 async function saveSession() {
