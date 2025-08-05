@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporte Fotográfico de Inspección</title>
+    <script src="index.umd.js"></script>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="info-modal.css">
+    <link rel="stylesheet" href="custom-styles.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        /* --- CSS HEADER MODERNO DE SESIONES --- */
+        .session-header {
+            position: sticky;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            z-index: 10000;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            background-size: 300% 300%;
+            animation: gradientFlow 12s ease infinite;
+            padding: 24px 4vw 24px 4vw;
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            overflow: hidden;
+            min-height: 120px;
+        }
+        @keyframes gradientFlow {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+        .session-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            animation: patternMove 20s linear infinite;
+        }
+        @keyframes patternMove {
+            0% { transform: translateX(0) translateY(0); }
+            100% { transform: translateX(60px) translateY(60px); }
+        }
+        .header-content {
+            position: relative;
+            z-index: 2;
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+        .session-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 10px 14px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            padding: 10px 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 900px;
+        }
+        .input-wrapper, .select-wrapper {
+            min-width: 120px;
+            max-width: 220px;
+            flex: 1 1 120px;
+        }
+        .session-input, .session-select {
+            width: 100%;
+            min-width: 0;
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 2px solid #764ba2;
+            background: #fff;
+            color: #764ba2;
+            font-size: 1rem;
+            font-family: inherit;
+            font-weight: 500;
+            box-shadow: 0 2px 8px rgba(118,75,162,0.08);
+            transition: border 0.2s, box-shadow 0.2s;
+            outline: none;
+        }
+        .session-input:focus, .session-select:focus {
+            border-color: #f093fb;
+            box-shadow: 0 0 0 2px #f093fb33;
+        }
+        .session-select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%23764ba2" height="20" viewBox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"><path d="M7.293 7.293a1 1 0 011.414 0L10 8.586l1.293-1.293a1 1 0 111.414 1.414l-2 2a1 1 0 01-1.414 0l-2-2a1 1 0 010-1.414z"/></svg>');
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 18px 18px;
+        }
+        .action-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+        }
+        .btn:active {
+            transform: translateY(-1px);
+        }
+        .btn-save {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8); /* azul */
+            color: white;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        .btn-load {
+            background: #f3f4f6; /* gris claro */
+            color: #374151;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.08);
+        }
+        .btn-load:hover {
+            background: #e5e7eb;
+            color: #1d4ed8;
+        }
+        .btn-delete {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+        .btn-more {
+            background: rgba(255, 255, 255, 0.2);
+            color: #764ba2;
+            border: 2px solid #764ba2;
+            font-weight: bold;
+            box-shadow: 0 2px 8px rgba(118, 75, 162, 0.10);
+        }
+        .btn-more:hover {
+            background: #764ba2;
+            color: #fff;
+            border-color: #764ba2;
+        }
+        .dropdown {
+            position: relative;
+            z-index: 3000;
+        }
+        .dropdown-content {
+            position: fixed;
+            top: auto;
+            left: auto;
+            right: 32px;
+            margin-top: 8px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+            min-width: 180px;
+            z-index: 4000;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(10px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-align: center;
+        }
+        .dropdown:hover .dropdown-content, .dropdown:focus-within .dropdown-content {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .dropdown-item {
+            padding: 12px 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #374151;
+            font-size: 0.875rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+        }
+        .dropdown-item:hover {
+            background: #f8fafc;
+            color: #667eea;
+        }
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #764ba2;
+            background: #fff;
+            border-radius: 10px;
+            border: 2px solid #764ba2;
+            padding: 6px 16px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            min-width: 110px;
+            box-shadow: 0 2px 8px rgba(118, 75, 162, 0.10);
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        /* Responsive Design */
+        @media (max-width: 1024px) {
+            .header-content, .session-controls {
+                max-width: 98vw;
+            }
+        }
+        @media (max-width: 768px) {
+            .session-header {
+                padding: 32px 2vw 32px 2vw;
+                min-height: 180px;
+            }
+            .header-content, .session-controls {
+                max-width: 100vw;
+            }
+            .session-controls {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px 0;
+            }
+            .action-buttons {
+                justify-content: stretch;
+            }
+            .status-indicator {
+                margin-left: 0;
+                justify-content: center;
+            }
+        }
+        @media (max-width: 600px) {
+          .session-controls {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+          .session-controls > div,
+          .session-controls-row1,
+          .session-controls-row2 {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+            display: flex !important;
+          }
+          .input-wrapper, .select-wrapper {
+            max-width: 100% !important;
+            min-width: 0 !important;
+            width: 100% !important;
+          }
+          .btn, .session-input, .session-select {
+            width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
+          .action-buttons, .session-controls > div > div {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+            display: flex !important;
+          }
+          .status-indicator {
+            margin-left: 0 !important;
+            justify-content: center !important;
+          }
+        }
+        @media (max-width: 480px) {
+            .session-header {
+                padding: 40px 0 40px 0;
+                min-height: 220px;
+            }
+        }
+        .container {
+            /* Siempre debajo del header, nunca se superpone */
+            margin-top: 0;
+            padding-top: 0 !important;
+        }
+        /* Floating particles effect */
+        .particles {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; z-index: 1;
+        }
+        .particle {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            animation: float 15s infinite linear;
+        }
+        .particle:nth-child(1) { width: 4px; height: 4px; left: 10%; animation-delay: 0s; }
+        .particle:nth-child(2) { width: 6px; height: 6px; left: 20%; animation-delay: 2s; }
+        .particle:nth-child(3) { width: 3px; height: 3px; left: 30%; animation-delay: 4s; }
+        .particle:nth-child(4) { width: 5px; height: 5px; left: 40%; animation-delay: 6s; }
+        .particle:nth-child(5) { width: 4px; height: 4px; left: 50%; animation-delay: 8s; }
+        .particle:nth-child(6) { width: 3px; height: 3px; left: 60%; animation-delay: 10s; }
+        .particle:nth-child(7) { width: 6px; height: 6px; left: 70%; animation-delay: 12s; }
+        .particle:nth-child(8) { width: 4px; height: 4px; left: 80%; animation-delay: 14s; }
+        @keyframes float {
+            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        .container {
+            margin-top: 0;
+            padding-top: 24px;
+        }
+    </style>
+</head>
+<body>
+<!-- Botón info flotante arriba a la derecha -->
+<button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;border:none;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.7rem;box-shadow:0 2px 12px #3b82f644;cursor:pointer;position:fixed;top:22px;right:22px;z-index:10001;">?</button>
+
+    <div class="container">
+        <div class="header">
+            <h1 style="font-family: Tahoma, Arial, sans-serif; text-align:center;">REPORTE FOTOGRÁFICO DE INSPECCIÓN</h1>
+            <div class="convenciones-block" style="margin:0 auto; text-align:center;">
+                <div class="convenciones-titulo">Convenciones:</div>
+                <div class="convenciones-list" style="justify-content:center;">
+                    <div class="convencion-item"><img src="verde.png.jpg" class="estado-icono" alt="Verde" /> Buen estado</div>
+                    <div class="convencion-item"><img src="amarillo.png.avif" class="estado-icono" alt="Amarillo" /> Observaciones de mejora</div>
+                    <div class="convencion-item"><img src="rojo.png.avif" class="estado-icono" alt="Rojo" /> No conformidad. Requiere intervención.</div>
+                </div>
+            </div>
+        </div>
+        <div class="upload-section">
+            <div class="card-header-content" style="margin:18px auto 18px auto; display:flex; flex-direction:column; align-items:center; max-width:900px;">
+                <div class="session-controls-embed" style="width:100%; display:flex; justify-content:center;">
+                  <div class="session-controls" style="width:100%; max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:10px; align-items:center;">
+                    <div style="display:flex; width:100%; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                      <div class="status-indicator" style="margin-left:0;min-width:110px;">  
+                        <div class="status-dot"></div>
+                        <span>Sistema Activo</span>
+                      </div>
+                      <div class="dropdown session-dropdown" style="position:relative;display:inline-block;">
+                        <button class="btn btn-more" id="optionsMenuBtn" type="button" style="font-size:1.5rem;padding:6px 14px;line-height:1;">⋮</button>
+                        <div class="dropdown-content" id="optionsDropdown" style="position:absolute;top:110%;right:0;min-width:180px;z-index:9999;opacity:0;visibility:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.18); text-align:center;">
+                          <div class="dropdown-item btn-delete" id="menuDeleteSession" style="justify-content:center;">🗑️ Borrar Sesión</div>
+                          <div class="dropdown-item btn-delete" id="menuClearDB" style="justify-content:center;">🧹 Eliminar Base de Datos</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style="display:flex; width:100%; gap:10px; align-items:flex-end; justify-content:center; flex-wrap:wrap;">
+                      <div class="input-wrapper" style="min-width:120px; max-width:220px; flex:1;">
+                          <input 
+                            type="text" 
+                            id="sessionNameInput" 
+                            class="session-input" 
+                            placeholder="Nueva sesión..."
+                        >
+                      </div>
+                      <div class="select-wrapper" style="min-width:120px; max-width:220px; flex:1;">
+                          <select id="sessionList" class="session-select">
+                            <option value="">Seleccionar sesión</option>
+                          </select>
+                      </div>
+                      <div style="display:flex; gap:8px;">
+                          <button class="btn btn-save" id="saveSessionBtn">💾 Guardar</button>
+                          <button class="btn btn-load" id="loadSessionBtn">📂 Cargar</button>
+                          <button class="btn btn-delete" id="deleteSessionBtn" style="display:none;">🗑️ Borrar</button>
+                      </div>
+                    </div>
+                    <div style="display:flex; gap:8px; justify-content:center; margin-top:8px; width:100%;">
+                      <button class="btn btn-more" id="btn-clear-db" style="display:none;">🧹 Eliminar Base de Datos</button>
+                      <button class="btn btn-save" id="saveChangesBtn" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;width:100%;max-width:100%;flex:1 1 0;text-align:center;justify-content:center;">💾 Guardar Cambios en esta Sesión</button>
+                    </div>
+                  </div>
+                </div>
+            </div>
+            <div class="upload-section-inner">
+                <div id="imageInputWrapper" class="main-btn">
+                    <label for="imageInput">
+                        📷 Seleccionar Imágenes
+                        <input type="file" multiple accept="image/*" id="imageInput" style="display:none;">
+                    </label>
+                </div>
+                <button id="clearBtn" class="main-btn" type="button">
+                    🧹 Limpiar
+                </button>
+                <button id="quickStateBtn" class="main-btn" type="button">
+                    ⚡ Selección rápida de estado
+                </button>
+            </div>
+            <div class="loading" id="loadingText">Procesando imágenes...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div id="gridContainer" class="image-grid"></div>
+        </div>
+
+        <div class="generate-section">
+            <button class="generate-btn" id="generateBtn" onclick="generateWord()">
+                📄 Generar Reporte Word
+            </button>
+        </div>
+    </div>
+
+    <div id="cropperModal" class="cropper-modal" style="display:none;">
+        <div class="cropper-container">
+            <canvas id="cropperCanvas"></canvas>
+            <div class="cropper-btns">
+                <button id="cropperOkBtn">Recortar</button>
+                <button class="cancel" id="cropperCancelBtn">Cancelar</button>
+            </div>
+        </div>
+    </div>
+    <footer class="footer">
+        Diseñado por <span>Zamir Pabón</span> | Empresa Familiar &copy; 2025<br>
+        <span style="font-size:0.98rem;color:#fff;opacity:0.7;">Esta aplicación genera reportes fotográficos de inspección en Word. Próximamente: más formatos y funciones.</span>
+    </footer>
+    <!-- Modal de info -->
+    <div id="infoModal" class="info-modal-bg" style="display:none;">
+      <div class="info-modal-content">
+        <button class="close-info-btn" id="closeInfoBtn" title="Cerrar">×</button>
+        <h2 style="text-align:center;margin-bottom:18px;color:#2980b9;letter-spacing:0.5px;">¿Qué hace esta aplicación?</h2>
+        <div class="info-slider">
+          <button class="info-arrow left" id="infoPrevBtn" title="Anterior" aria-label="Anterior">&#60;</button>
+          <div class="info-slide active" id="infoSlide0">
+            <div class="info-card">
+              <h3>Descripción general</h3>
+              <p style="font-size:1.08rem;line-height:1.6;margin-bottom:10px;">
+                Esta aplicación te permite crear reportes fotográficos de inspección de manera rápida y profesional. Sube imágenes, asígnales un estado, ordénalas y genera un documento Word listo para compartir.<br><br>
+                <b>Ideal para empresas, técnicos y supervisores que buscan eficiencia y claridad en sus reportes.</b>
+              </p>
+              <p style="color:#e67e22;font-weight:bold;">Próximamente: nuevos diseños de Word, exportación a PDF y más opciones de personalización.</p>
+            </div>
+          </div>
+          <div class="info-slide" id="infoSlide1">
+            <div class="info-card">
+              <h3>¿Cómo funciona?</h3>
+              <ul>
+                <li>Sube tus imágenes de inspección.</li>
+                <li>Asigna un estado a cada imagen (verde, amarillo, rojo).</li>
+                <li>Agrega descripciones y ordena las imágenes.</li>
+                <li>Guarda tu sesión y genera el reporte Word.</li>
+              </ul>
+            </div>
+          </div>
+          <button class="info-arrow right" id="infoNextBtn" title="Siguiente" aria-label="Siguiente">&#62;</button>
+        </div>
+        <div class="info-dots" id="infoDots"></div>
+      </div>
+    </div>
+    <script src="script.js"></script>
+    <script>
+(function(){
+  var infoBtn = document.getElementById('infoBtn');
+  var infoModal = document.getElementById('infoModal');
+  var closeBtn = document.getElementById('closeInfoBtn');
+  var prevBtn, nextBtn, dots;
+  var current = 0;
+  var slides;
+
+  function getSlides() {
+    // Solo selecciona slides hijos directos de .info-slider para evitar problemas de anidación
+    var slider = document.querySelector('.info-slider');
+    return Array.from(slider.querySelectorAll('.info-slide'));
+  }
+
+  function showSlide(n) {
+    slides.forEach((slide, i) => {
+      slide.classList.toggle('active', i === n);
+    });
+    current = n;
+    if (prevBtn && nextBtn) {
+      prevBtn.disabled = (n === 0);
+      nextBtn.disabled = (n === slides.length - 1);
+    }
+    if (dots) {
+      dots.querySelectorAll('.dot').forEach((dot, i) => {
+        dot.classList.toggle('active', i === n);
+      });
+    }
+  }
+
+  function goPrev() {
+    if (current > 0) showSlide(current - 1);
+  }
+  function goNext() {
+    if (current < slides.length - 1) showSlide(current + 1);
+  }
+
+  function setupArrows() {
+    prevBtn = document.getElementById('infoPrevBtn');
+    nextBtn = document.getElementById('infoNextBtn');
+    if (prevBtn && nextBtn) {
+      prevBtn.onclick = goPrev;
+      nextBtn.onclick = goNext;
+    }
+  }
+
+  function setupDots() {
+    dots = document.getElementById('infoDots');
+    if (dots) {
+      dots.innerHTML = '';
+      slides.forEach((_, i) => {
+        var dot = document.createElement('span');
+        dot.className = 'dot' + (i === 0 ? ' active' : '');
+        dot.addEventListener('click', function(){ showSlide(i); });
+        dots.appendChild(dot);
+      });
+    }
+  }
+
+  if(infoBtn && infoModal) {
+    infoBtn.addEventListener('click', function() {
+      infoModal.style.display = 'flex';
+      setTimeout(function(){
+        slides = getSlides();
+        setupArrows();
+        setupDots();
+        showSlide(0);
+      }, 50);
+    });
+  }
+  if(closeBtn && infoModal) {
+    closeBtn.addEventListener('click', function() {
+      infoModal.style.display = 'none';
+    });
+  }
+  // ARREGLO: Permitir cerrar el modal al hacer click fuera del contenido
+  if(infoModal) {
+    infoModal.addEventListener('mousedown', function(e) {
+      if(e.target === infoModal) infoModal.style.display = 'none';
+    });
+  }
+  window.addEventListener('click', function(e){
+    if(e.target === infoModal) infoModal.style.display = 'none';
+  });
+})();
+
+(function(){
+  var saveChangesBtn = document.getElementById('saveChangesBtn');
+  if(saveChangesBtn) {
+    saveChangesBtn.addEventListener('click', function() {
+      if (window.saveChangesToCurrentSession) {
+        window.saveChangesToCurrentSession();
+      } else {
+        alert('No se pudo guardar los cambios.');
+      }
+    });
+  }
+})();
+
+document.addEventListener('DOMContentLoaded', function() {
+  function toggleScrollBtns() {
+    const topBtn = document.getElementById('scrollToTopBtn');
+    const bottomBtn = document.getElementById('scrollToBottomBtn');
+    if (!topBtn || !bottomBtn) return;
+    const scrollY = window.scrollY || document.documentElement.scrollTop;
+    const winH = window.innerHeight || document.documentElement.clientHeight;
+    const docH = document.documentElement.scrollHeight;
+    topBtn.style.display = scrollY > 120 ? 'block' : 'none';
+    bottomBtn.style.display = (scrollY + winH < docH - 120) ? 'block' : 'none';
+  }
+  const topBtn = document.getElementById('scrollToTopBtn');
+  const bottomBtn = document.getElementById('scrollToBottomBtn');
+  if (topBtn) {
+    topBtn.onclick = function(){ window.scrollTo({top:0,behavior:'smooth'}); };
+  }
+  if (bottomBtn) {
+    bottomBtn.onclick = function(){ window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); };
+  }
+  window.addEventListener('scroll', toggleScrollBtns);
+  window.addEventListener('resize', toggleScrollBtns);
+  toggleScrollBtns();
+});
+    </script>
+    <!-- Botones de scroll rápido -->
+    <button id="scrollToTopBtn" style="position:fixed;bottom:90px;right:18px;z-index:9999;display:none;padding:12px 16px;border-radius:50%;background:#764ba2;color:#fff;font-size:1.5rem;border:none;box-shadow:0 2px 8px #764ba288;cursor:pointer;">↑</button>
+    <button id="scrollToBottomBtn" style="position:fixed;bottom:30px;right:18px;z-index:9999;display:none;padding:12px 16px;border-radius:50%;background:#764ba2;color:#fff;font-size:1.5rem;border:none;box-shadow:0 2px 8px #764ba288;cursor:pointer;">↓</button>
+
+    <script>
+// Dropdown logic SOLO para el menú ⋮ de la fila de controles
+(function(){
+    var btn = document.getElementById('optionsMenuBtn');
+    var dd = document.getElementById('optionsDropdown');
+    if (!btn || !dd) return;
+    btn.onclick = function(e) {
+        e.stopPropagation();
+        if(dd.style.opacity === '1') {
+            dd.style.opacity = '0';
+            dd.style.visibility = 'hidden';
+        } else {
+            dd.style.opacity = '1';
+            dd.style.visibility = 'visible';
+        }
+    };
+    document.addEventListener('click', function(e) {
+        if(dd) { dd.style.opacity = '0'; dd.style.visibility = 'hidden'; }
+    });
+    dd.onclick = function(e) { e.stopPropagation(); };
+    // Enlazar acciones correctas a los ítems del menú
+    var menuDeleteSession = document.getElementById('menuDeleteSession');
+    var menuClearDB = document.getElementById('menuClearDB');
+    if(menuDeleteSession) menuDeleteSession.onclick = function(e) {
+        e.stopPropagation();
+        document.getElementById('deleteSessionBtn').click();
+        dd.style.opacity = '0';
+        dd.style.visibility = 'hidden';
+    };
+    if(menuClearDB) menuClearDB.onclick = function(e) {
+        e.stopPropagation();
+        document.getElementById('btn-clear-db').click();
+        dd.style.opacity = '0';
+        dd.style.visibility = 'hidden';
+    };
+})();
+</script>
+  </body>
+</html>
