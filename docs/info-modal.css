@@ -88,8 +88,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  max-height: none;
-  overflow-y: visible;
+  max-height: 420px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #b9d8f7 transparent;
 }
 .info-card h3 {
   color: #2980b9;
@@ -99,6 +101,19 @@
   margin: 0 0 0 18px;
   padding: 0 0 0 0;
   font-size: 1.05rem;
+}
+
+.info-card::-webkit-scrollbar {
+  width: 8px;
+}
+
+.info-card::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #bfdcff, #84b8f5);
+  border-radius: 999px;
+}
+
+.info-card::-webkit-scrollbar-track {
+  background: transparent;
 }
 .info-arrow {
   background: #eaf6ff;
@@ -164,6 +179,7 @@
     font-size: 0.95rem;
     width: 100%;
     box-sizing: border-box;
+    max-height: 360px;
   }
   .info-card h3 {
     font-size: 1.1rem;

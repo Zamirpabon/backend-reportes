@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reporte Fotográfico de Inspección</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231d4ed8'/%3E%3Cpath d='M18 22h28l-4 24H22z' fill='%23fff' opacity='.96'/%3E%3Cpath d='M24 18h10l3 4H24z' fill='%2393c5fd'/%3E%3Ccircle cx='31' cy='34' r='6' fill='%231d4ed8'/%3E%3C/svg%3E">
     <script src="index.umd.js"></script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="info-modal.css">
@@ -344,26 +345,58 @@
 </head>
 <body>
 <!-- Botón info flotante arriba a la derecha -->
-<button class="info-btn" id="infoBtn" title="¿Qué hace esta aplicación?" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;border:none;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.7rem;box-shadow:0 2px 12px #3b82f644;cursor:pointer;position:fixed;top:22px;right:22px;z-index:10001;">?</button>
-
     <div class="container">
-        <div class="header">
-            <h1 style="font-family: Tahoma, Arial, sans-serif; text-align:center;">REPORTE FOTOGRÁFICO DE INSPECCIÓN</h1>
-            <div class="convenciones-block" style="margin:0 auto; text-align:center;">
-                <div class="convenciones-titulo">Convenciones:</div>
-                <div class="convenciones-list" style="justify-content:center;">
-                    <div class="convencion-item"><img src="verde.png.jpg" class="estado-icono" alt="Verde" /> Buen estado</div>
-                    <div class="convencion-item"><img src="amarillo.png.avif" class="estado-icono" alt="Amarillo" /> Observaciones de mejora</div>
-                    <div class="convencion-item"><img src="rojo.png.avif" class="estado-icono" alt="Rojo" /> No conformidad. Requiere intervención.</div>
+        <div class="header report-header">
+            <button class="info-btn info-btn-premium" id="infoBtn" title="¿Qué hace esta aplicación?" type="button">?</button>
+            <div class="report-header-inner">
+                <h1 class="report-title">REPORTE FOTOGRÁFICO DE INSPECCIÓN</h1>
+                <div class="report-title-line"></div>
+                <div class="conventions-row">
+                    <span class="conventions-label">Convenciones</span>
+                    <div class="convention-chip convention-green">
+                        <span class="chip-dot"></span>
+                        <span>Buen estado</span>
+                    </div>
+                    <div class="convention-chip convention-yellow">
+                        <span class="chip-dot"></span>
+                        <span>Observaciones de mejora</span>
+                    </div>
+                    <div class="convention-chip convention-red">
+                        <span class="chip-dot"></span>
+                        <span>No conformidad. Requiere intervención.</span>
+                    </div>
                 </div>
             </div>
         </div>
+        <section class="storage-usage-card" id="storageUsageCard" hidden aria-live="polite">
+            <div class="storage-usage-copy">
+                <span class="storage-usage-kicker">Uso de espacio</span>
+                <strong class="storage-usage-title">Espacio usado por tus fotos</strong>
+                <span class="storage-usage-meta" id="storageUsageMeta">Calculando espacio usado...</span>
+            </div>
+            <div class="storage-usage-bar" aria-hidden="true">
+                <span class="storage-usage-fill" id="storageUsageFill"></span>
+            </div>
+            <div class="storage-usage-foot">
+                <span class="storage-usage-detail" id="storageUsageDetail">0 MB usados</span>
+                <button type="button" class="storage-usage-files-toggle" id="storageUsageFiles" aria-expanded="false">0 fotos guardadas</button>
+            </div>
+            <div class="storage-sessions-dropdown" id="storageSessionsDropdown" hidden></div>
+            <div class="storage-cache-foot">
+                <span class="storage-cache-label">Borradores locales de esta app</span>
+                <span class="storage-usage-detail" id="deviceCacheDetail">Calculando borrador local...</span>
+            </div>
+            <div class="storage-cache-foot">
+                <span class="storage-cache-label">Cuota local estimada por el navegador</span>
+                <span class="storage-usage-detail" id="deviceQuotaDetail">Calculando espacio local disponible para esta app...</span>
+            </div>
+        </section>
         <div class="upload-section">
             <div class="card-header-content" style="margin:18px auto 18px auto; display:flex; flex-direction:column; align-items:center; max-width:900px;">
                 <div class="session-controls-embed" style="width:100%; display:flex; justify-content:center;">
-                  <div class="session-controls" style="width:100%; max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:10px; align-items:center;">
-                    <div style="display:flex; width:100%; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                      <div class="status-indicator" style="margin-left:0;min-width:110px;">  
+                  <div class="session-controls session-panel" style="width:100%; max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:10px; align-items:center;">
+                    <div class="session-topbar" style="display:flex; width:100%; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                      <div class="status-indicator" style="margin-left:0;min-width:0;">  
                         <div class="status-dot"></div>
                         <span>Sistema Activo</span>
                       </div>
@@ -375,8 +408,9 @@
                         </div>
                       </div>
                     </div>
-                    <div style="display:flex; width:100%; gap:10px; align-items:flex-end; justify-content:center; flex-wrap:wrap;">
-                      <div class="input-wrapper" style="min-width:120px; max-width:220px; flex:1;">
+                    <div class="session-main-row" style="display:flex; width:100%; gap:10px; align-items:flex-end; justify-content:center; flex-wrap:wrap;">
+                      <div class="input-wrapper session-name-wrap" style="min-width:0; max-width:none; flex:1 1 0;">
+                          <span class="session-field-label" id="sessionNameLabel">Nombre de la sesión actual</span>
                           <input 
                             type="text" 
                             id="sessionNameInput" 
@@ -384,20 +418,18 @@
                             placeholder="Nueva sesión..."
                         >
                       </div>
-                      <div class="select-wrapper" style="min-width:120px; max-width:220px; flex:1;">
+                      <div class="select-wrapper session-select-wrap" style="min-width:0; max-width:none; flex:1 1 0;">
+                          <span class="session-field-label">Sesión seleccionada</span>
                           <select id="sessionList" class="session-select">
-                            <option value="">Seleccionar sesión</option>
+                            <option value="">Sin sesión</option>
                           </select>
                       </div>
-                      <div style="display:flex; gap:8px;">
-                          <button class="btn btn-save" id="saveSessionBtn">💾 Guardar</button>
-                          <button class="btn btn-load" id="loadSessionBtn">📂 Cargar</button>
-                          <button class="btn btn-delete" id="deleteSessionBtn" style="display:none;">🗑️ Borrar</button>
-                      </div>
                     </div>
-                    <div style="display:flex; gap:8px; justify-content:center; margin-top:8px; width:100%;">
-                      <button class="btn btn-more" id="btn-clear-db" style="display:none;">🧹 Eliminar Base de Datos</button>
-                      <button class="btn btn-save" id="saveChangesBtn" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;width:100%;max-width:100%;flex:1 1 0;text-align:center;justify-content:center;">💾 Guardar Cambios en esta Sesión</button>
+                    <div class="session-save-row" style="display:flex; gap:8px; justify-content:center; margin-top:8px; width:100%;">
+                      <button class="btn btn-more" id="btn-clear-db" type="button" style="display:none;">Eliminar Base de Datos</button>
+                      <button class="btn btn-save session-save-btn" id="saveChangesBtn" type="button" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;width:100%;max-width:100%;flex:1 1 0;text-align:center;justify-content:center;"><span class="btn-icon btn-icon-save"></span><span>Guardar Cambios en esta Sesión</span></button>
+                      <button type="button" class="btn btn-load" id="loadSessionBtn"><span class="btn-icon btn-icon-folder"></span><span>Cargar</span></button>
+                      <button type="button" class="btn btn-delete" id="deleteSessionBtn" style="display:none;"><span class="btn-icon btn-icon-trash"></span><span>Borrar</span></button>
                     </div>
                   </div>
                 </div>
@@ -405,20 +437,39 @@
             <div class="upload-section-inner">
                 <div id="imageInputWrapper" class="main-btn">
                     <label for="imageInput">
-                        📷 Seleccionar Imágenes
+                        <span class="btn-icon btn-icon-camera"></span>
+                        <span>Seleccionar Imágenes</span>
                         <input type="file" multiple accept="image/*" id="imageInput" style="display:none;">
                     </label>
                 </div>
                 <button id="clearBtn" class="main-btn" type="button">
-                    🧹 Limpiar
+                    <span class="btn-icon btn-icon-clear"></span>
+                    <span>Limpiar</span>
                 </button>
                 <button id="quickStateBtn" class="main-btn" type="button">
-                    ⚡ Selección rápida de estado
+                    <span class="btn-icon btn-icon-bolt"></span>
+                    <span>Estado rápido</span>
+                </button>
+                <button id="reloadSavedBtn" class="main-btn" type="button">
+                    <span class="btn-icon btn-icon-restore"></span>
+                    <span>Último guardado</span>
                 </button>
             </div>
-            <div class="loading" id="loadingText">Procesando imágenes...</div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
+            <div class="upload-loader" id="uploadLoader" style="display:none;" aria-live="polite">
+                <div class="upload-loader-shell">
+                    <div class="loader-con upload-loader-animation" aria-hidden="true">
+                        <div class="pfile" style="--i: 0;"></div>
+                        <div class="pfile" style="--i: 1;"></div>
+                        <div class="pfile" style="--i: 2;"></div>
+                        <div class="pfile" style="--i: 3;"></div>
+                        <div class="pfile" style="--i: 4;"></div>
+                        <div class="pfile" style="--i: 5;"></div>
+                    </div>
+                    <div class="upload-loader-copy">
+                        <span class="upload-loader-title" id="uploadLoaderTitle">Subiendo fotos</span>
+                        <span class="upload-loader-count" id="uploadLoaderCount">0/0</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -426,14 +477,159 @@
             <div id="gridContainer" class="image-grid"></div>
         </div>
 
-        <div class="generate-section">
-            <button class="generate-btn" id="generateBtn" onclick="generateWord()">
+        <div class="generate-section sticky-generate-bar">
+            <div class="generate-meta">
+                <div class="generate-progress-copy">
+                    <span class="generate-eyebrow">Progreso del reporte</span>
+                    <span class="generate-progress-text" id="generateProgressText">0/0 imágenes completas</span>
+                </div>
+                <div class="generate-summary-dots" id="generateSummaryDots">
+                    <span class="summary-dot-item" title="Imágenes en buen estado">
+                        <span class="summary-dot summary-green"></span>
+                        <span class="summary-dot-copy">
+                            <span id="summaryGreen">0</span>
+                            <small>Buen estado</small>
+                        </span>
+                    </span>
+                    <span class="summary-dot-item" title="Imágenes con observaciones">
+                        <span class="summary-dot summary-yellow"></span>
+                        <span class="summary-dot-copy">
+                            <span id="summaryYellow">0</span>
+                            <small>Observaciones</small>
+                        </span>
+                    </span>
+                    <span class="summary-dot-item" title="Imágenes no conformes">
+                        <span class="summary-dot summary-red"></span>
+                        <span class="summary-dot-copy">
+                            <span id="summaryRed">0</span>
+                            <small>No conformes</small>
+                        </span>
+                    </span>
+                </div>
+            </div>
+            <button class="generate-btn" id="generateBtn" onclick="generateWord()" disabled>
                 📄 Generar Reporte Word
             </button>
         </div>
     </div>
 
-    <div id="cropperModal" class="cropper-modal" style="display:none;">
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+    <div id="appLoaderOverlay" class="app-loader-overlay" aria-hidden="true">
+        <div class="app-loader-shell" role="status" aria-live="polite">
+            <div class="loader app-loader-book">
+                <div>
+                    <ul>
+                        <li><svg fill="currentColor" viewBox="0 0 90 120"><path d="M90,0 L90,120 L11,120 C4.92486775,120 0,115.075132 0,109 L0,11 C0,4.92486775 4.92486775,0 11,0 L90,0 Z M71.5,81 L18.5,81 C17.1192881,81 16,82.1192881 16,83.5 C16,84.8254834 17.0315359,85.9100387 18.3356243,85.9946823 L18.5,86 L71.5,86 C72.8807119,86 74,84.8807119 74,83.5 C74,82.1745166 72.9684641,81.0899613 71.6643757,81.0053177 L71.5,81 Z M71.5,57 L18.5,57 C17.1192881,57 16,58.1192881 16,59.5 C16,60.8254834 17.0315359,61.9100387 18.3356243,61.9946823 L18.5,62 L71.5,62 C72.8807119,62 74,60.8807119 74,59.5 C74,58.1192881 72.8807119,57 71.5,57 Z M71.5,33 L18.5,33 C17.1192881,33 16,34.1192881 16,35.5 C16,36.8254834 17.0315359,37.9100387 18.3356243,37.9946823 L18.5,38 L71.5,38 C72.8807119,38 74,36.8807119 74,35.5 C74,34.1192881 72.8807119,33 71.5,33 Z"></path></svg></li>
+                        <li><svg fill="currentColor" viewBox="0 0 90 120"><path d="M90,0 L90,120 L11,120 C4.92486775,120 0,115.075132 0,109 L0,11 C0,4.92486775 4.92486775,0 11,0 L90,0 Z M71.5,81 L18.5,81 C17.1192881,81 16,82.1192881 16,83.5 C16,84.8254834 17.0315359,85.9100387 18.3356243,85.9946823 L18.5,86 L71.5,86 C72.8807119,86 74,84.8807119 74,83.5 C74,82.1745166 72.9684641,81.0899613 71.6643757,81.0053177 L71.5,81 Z M71.5,57 L18.5,57 C17.1192881,57 16,58.1192881 16,59.5 C16,60.8254834 17.0315359,61.9100387 18.3356243,61.9946823 L18.5,62 L71.5,62 C72.8807119,62 74,60.8807119 74,59.5 C74,58.1192881 72.8807119,57 71.5,57 Z M71.5,33 L18.5,33 C17.1192881,33 16,34.1192881 16,35.5 C16,36.8254834 17.0315359,37.9100387 18.3356243,37.9946823 L18.5,38 L71.5,38 C72.8807119,38 74,36.8807119 74,35.5 C74,34.1192881 72.8807119,33 71.5,33 Z"></path></svg></li>
+                        <li><svg fill="currentColor" viewBox="0 0 90 120"><path d="M90,0 L90,120 L11,120 C4.92486775,120 0,115.075132 0,109 L0,11 C0,4.92486775 4.92486775,0 11,0 L90,0 Z M71.5,81 L18.5,81 C17.1192881,81 16,82.1192881 16,83.5 C16,84.8254834 17.0315359,85.9100387 18.3356243,85.9946823 L18.5,86 L71.5,86 C72.8807119,86 74,84.8807119 74,83.5 C74,82.1745166 72.9684641,81.0899613 71.6643757,81.0053177 L71.5,81 Z M71.5,57 L18.5,57 C17.1192881,57 16,58.1192881 16,59.5 C16,60.8254834 17.0315359,61.9100387 18.3356243,61.9946823 L18.5,62 L71.5,62 C72.8807119,62 74,60.8807119 74,59.5 C74,58.1192881 72.8807119,57 71.5,57 Z M71.5,33 L18.5,33 C17.1192881,33 16,34.1192881 16,35.5 C16,36.8254834 17.0315359,37.9100387 18.3356243,37.9946823 L18.5,38 L71.5,38 C72.8807119,38 74,36.8807119 74,35.5 C74,34.1192881 72.8807119,33 71.5,33 Z"></path></svg></li>
+                        <li><svg fill="currentColor" viewBox="0 0 90 120"><path d="M90,0 L90,120 L11,120 C4.92486775,120 0,115.075132 0,109 L0,11 C0,4.92486775 4.92486775,0 11,0 L90,0 Z M71.5,81 L18.5,81 C17.1192881,81 16,82.1192881 16,83.5 C16,84.8254834 17.0315359,85.9100387 18.3356243,85.9946823 L18.5,86 L71.5,86 C72.8807119,86 74,84.8807119 74,83.5 C74,82.1745166 72.9684641,81.0899613 71.6643757,81.0053177 L71.5,81 Z M71.5,57 L18.5,57 C17.1192881,57 16,58.1192881 16,59.5 C16,60.8254834 17.0315359,61.9100387 18.3356243,61.9946823 L18.5,62 L71.5,62 C72.8807119,62 74,60.8807119 74,59.5 C74,58.1192881 72.8807119,57 71.5,57 Z M71.5,33 L18.5,33 C17.1192881,33 16,34.1192881 16,35.5 C16,36.8254834 17.0315359,37.9100387 18.3356243,37.9946823 L18.5,38 L71.5,38 C72.8807119,38 74,36.8807119 74,35.5 C74,34.1192881 72.8807119,33 71.5,33 Z"></path></svg></li>
+                        <li><svg fill="currentColor" viewBox="0 0 90 120"><path d="M90,0 L90,120 L11,120 C4.92486775,120 0,115.075132 0,109 L0,11 C0,4.92486775 4.92486775,0 11,0 L90,0 Z M71.5,81 L18.5,81 C17.1192881,81 16,82.1192881 16,83.5 C16,84.8254834 17.0315359,85.9100387 18.3356243,85.9946823 L18.5,86 L71.5,86 C72.8807119,86 74,84.8807119 74,83.5 C74,82.1745166 72.9684641,81.0899613 71.6643757,81.0053177 L71.5,81 Z M71.5,57 L18.5,57 C17.1192881,57 16,58.1192881 16,59.5 C16,60.8254834 17.0315359,61.9100387 18.3356243,61.9946823 L18.5,62 L71.5,62 C72.8807119,62 74,60.8807119 74,59.5 C74,58.1192881 72.8807119,57 71.5,57 Z M71.5,33 L18.5,33 C17.1192881,33 16,34.1192881 16,35.5 C16,36.8254834 17.0315359,37.9100387 18.3356243,37.9946823 L18.5,38 L71.5,38 C72.8807119,38 74,36.8807119 74,35.5 C74,34.1192881 72.8807119,33 71.5,33 Z"></path></svg></li>
+                        <li><svg fill="currentColor" viewBox="0 0 90 120"><path d="M90,0 L90,120 L11,120 C4.92486775,120 0,115.075132 0,109 L0,11 C0,4.92486775 4.92486775,0 11,0 L90,0 Z M71.5,81 L18.5,81 C17.1192881,81 16,82.1192881 16,83.5 C16,84.8254834 17.0315359,85.9100387 18.3356243,85.9946823 L18.5,86 L71.5,86 C72.8807119,86 74,84.8807119 74,83.5 C74,82.1745166 72.9684641,81.0899613 71.6643757,81.0053177 L71.5,81 Z M71.5,57 L18.5,57 C17.1192881,57 16,58.1192881 16,59.5 C16,60.8254834 17.0315359,61.9100387 18.3356243,61.9946823 L18.5,62 L71.5,62 C72.8807119,62 74,60.8807119 74,59.5 C74,58.1192881 72.8807119,57 71.5,57 Z M71.5,33 L18.5,33 C17.1192881,33 16,34.1192881 16,35.5 C16,36.8254834 17.0315359,37.9100387 18.3356243,37.9946823 L18.5,38 L71.5,38 C72.8807119,38 74,36.8807119 74,35.5 C74,34.1192881 72.8807119,33 71.5,33 Z"></path></svg></li>
+                    </ul>
+                </div>
+                <span id="appLoaderLabel">Cargando sesión...</span>
+            </div>
+        </div>
+    </div>
+    <div id="exportLoaderOverlay" class="export-loader-overlay" aria-hidden="true">
+        <div class="export-loader-shell" role="status" aria-live="polite">
+            <div class="typewriter export-typewriter" aria-hidden="true">
+                <div class="slide"><i></i></div>
+                <div class="paper"></div>
+                <div class="keyboard"></div>
+            </div>
+            <div class="export-loader-copy">
+                <span class="export-loader-title" id="exportLoaderTitle">Generando reporte Word</span>
+                <span class="export-loader-text" id="exportLoaderText">Estamos preparando tu documento...</span>
+            </div>
+        </div>
+    </div>
+    <div id="deleteLoaderOverlay" class="delete-loader-overlay" aria-hidden="true">
+        <div class="delete-loader-shell" role="status" aria-live="polite">
+            <div id="ghost" aria-hidden="true">
+                <div id="red">
+                    <div id="pupil"></div>
+                    <div id="pupil1"></div>
+                    <div id="eye"></div>
+                    <div id="eye1"></div>
+                    <div id="top0"></div>
+                    <div id="top1"></div>
+                    <div id="top2"></div>
+                    <div id="top3"></div>
+                    <div id="top4"></div>
+                    <div id="st0"></div>
+                    <div id="st1"></div>
+                    <div id="st2"></div>
+                    <div id="st3"></div>
+                    <div id="st4"></div>
+                    <div id="st5"></div>
+                    <div id="an1"></div>
+                    <div id="an2"></div>
+                    <div id="an3"></div>
+                    <div id="an4"></div>
+                    <div id="an5"></div>
+                    <div id="an6"></div>
+                    <div id="an7"></div>
+                    <div id="an8"></div>
+                    <div id="an9"></div>
+                    <div id="an10"></div>
+                    <div id="an11"></div>
+                    <div id="an12"></div>
+                    <div id="an13"></div>
+                    <div id="an14"></div>
+                    <div id="an15"></div>
+                    <div id="an16"></div>
+                    <div id="an17"></div>
+                    <div id="an18"></div>
+                    <div id="mouthstart"></div>
+                    <div id="mouth1"></div>
+                    <div id="mouth2"></div>
+                    <div id="mouth3"></div>
+                    <div id="mouth4"></div>
+                    <div id="mouth5"></div>
+                    <div id="mouthend"></div>
+                </div>
+                <div id="shadow"></div>
+            </div>
+            <div class="delete-loader-copy">
+                <span class="delete-loader-title" id="deleteLoaderTitle">Eliminando...</span>
+                <span class="delete-loader-text" id="deleteLoaderText">Estamos limpiando la información seleccionada.</span>
+            </div>
+        </div>
+    </div>
+    <div id="saveLoaderOverlay" class="save-loader-overlay" aria-hidden="true">
+        <div class="save-loader-shell" role="status" aria-live="polite">
+            <div class="save-loader-scene" aria-hidden="true">
+                <div class="box-of-star1">
+                    <div class="star star-position1"></div><div class="star star-position2"></div><div class="star star-position3"></div><div class="star star-position4"></div><div class="star star-position5"></div><div class="star star-position6"></div><div class="star star-position7"></div>
+                </div>
+                <div class="box-of-star2">
+                    <div class="star star-position1"></div><div class="star star-position2"></div><div class="star star-position3"></div><div class="star star-position4"></div><div class="star star-position5"></div><div class="star star-position6"></div><div class="star star-position7"></div>
+                </div>
+                <div class="box-of-star3">
+                    <div class="star star-position1"></div><div class="star star-position2"></div><div class="star star-position3"></div><div class="star star-position4"></div><div class="star star-position5"></div><div class="star star-position6"></div><div class="star star-position7"></div>
+                </div>
+                <div class="box-of-star4">
+                    <div class="star star-position1"></div><div class="star star-position2"></div><div class="star star-position3"></div><div class="star star-position4"></div><div class="star star-position5"></div><div class="star star-position6"></div><div class="star star-position7"></div>
+                </div>
+                <div data-js="astro" class="astronaut">
+                    <div class="head"></div>
+                    <div class="arm arm-left"></div>
+                    <div class="arm arm-right"></div>
+                    <div class="body"><div class="panel"></div></div>
+                    <div class="leg leg-left"></div>
+                    <div class="leg leg-right"></div>
+                    <div class="schoolbag"></div>
+                </div>
+            </div>
+            <div class="save-loader-copy">
+                <span class="save-loader-title" id="saveLoaderTitle">Guardando cambios...</span>
+                <span class="save-loader-text" id="saveLoaderText">Estamos asegurando tus fotos y datos en la sesión.</span>
+            </div>
+        </div>
+    </div>
+
+      <div id="cropperModal" class="cropper-modal" style="display:none;">
         <div class="cropper-container">
             <canvas id="cropperCanvas"></canvas>
             <div class="cropper-btns">
@@ -443,8 +639,8 @@
         </div>
     </div>
     <footer class="footer">
-        Diseñado por <span>Zamir Pabón</span> | Empresa Familiar &copy; 2025<br>
-        <span style="font-size:0.98rem;color:#fff;opacity:0.7;">Esta aplicación genera reportes fotográficos de inspección en Word. Próximamente: más formatos y funciones.</span>
+        Reporte Fotográfico de Inspección <span>v2.0</span> | Última actualización: marzo 2026<br>
+        <span style="font-size:0.98rem;color:#fff;opacity:0.7;">Diseñado por Zamir Pabón. Listo para sesiones, estados y exportación profesional.</span>
     </footer>
     <!-- Modal de info -->
     <div id="infoModal" class="info-modal-bg" style="display:none;">
@@ -466,11 +662,27 @@
           <div class="info-slide" id="infoSlide1">
             <div class="info-card">
               <h3>¿Cómo funciona?</h3>
+                <ul>
+                  <li>Sube tus imágenes de inspección.</li>
+                  <li>Asigna un estado a cada imagen (verde, amarillo, rojo).</li>
+                  <li>Agrega descripciones y ordena las imágenes.</li>
+                  <li>Guarda tu sesión y genera el reporte Word.</li>
+                </ul>
+              </div>
+            </div>
+          <div class="info-slide" id="infoSlide2">
+            <div class="info-card">
+              <h3>Todo lo que ya incluye</h3>
               <ul>
-                <li>Sube tus imágenes de inspección.</li>
-                <li>Asigna un estado a cada imagen (verde, amarillo, rojo).</li>
-                <li>Agrega descripciones y ordena las imágenes.</li>
-                <li>Guarda tu sesión y genera el reporte Word.</li>
+                <li>Espacio de trabajo <b>Sin sesión</b> para empezar formatos en blanco.</li>
+                <li>Sesiones guardadas en Supabase con carga, edición y actualización de cambios.</li>
+                <li>Limpieza automática de fotos sin sesión después de 3 días.</li>
+                <li>Contador flotante con recordatorio del tiempo restante para borrar fotos sin sesión.</li>
+                <li>Animaciones de carga para cargar sesión, subir imágenes y generar reporte Word.</li>
+                <li>Toasts y modales visuales mejorados en lugar de alertas del navegador.</li>
+                <li>Recuperación de la sesión abierta en el dispositivo hasta que la cambies o la cierres.</li>
+                <li>Estado visual de <b>Cambios sin guardar</b> y control más seguro al cambiar de sesión.</li>
+                <li>Exportación a Word con flujo visual de confirmación y generación.</li>
               </ul>
             </div>
           </div>
@@ -567,30 +779,20 @@
   });
 })();
 
-(function(){
-  var saveChangesBtn = document.getElementById('saveChangesBtn');
-  if(saveChangesBtn) {
-    saveChangesBtn.addEventListener('click', function() {
-      if (window.saveChangesToCurrentSession) {
-        window.saveChangesToCurrentSession();
-      } else {
-        alert('No se pudo guardar los cambios.');
-      }
-    });
-  }
-})();
-
 document.addEventListener('DOMContentLoaded', function() {
-  function toggleScrollBtns() {
-    const topBtn = document.getElementById('scrollToTopBtn');
-    const bottomBtn = document.getElementById('scrollToBottomBtn');
-    if (!topBtn || !bottomBtn) return;
-    const scrollY = window.scrollY || document.documentElement.scrollTop;
-    const winH = window.innerHeight || document.documentElement.clientHeight;
-    const docH = document.documentElement.scrollHeight;
-    topBtn.style.display = scrollY > 120 ? 'block' : 'none';
-    bottomBtn.style.display = (scrollY + winH < docH - 120) ? 'block' : 'none';
-  }
+    function toggleScrollBtns() {
+      const topBtn = document.getElementById('scrollToTopBtn');
+      const bottomBtn = document.getElementById('scrollToBottomBtn');
+      if (!topBtn || !bottomBtn) return;
+      const scrollY = window.scrollY || document.documentElement.scrollTop;
+      const winH = window.innerHeight || document.documentElement.clientHeight;
+      const docH = document.documentElement.scrollHeight;
+      const imageCount = document.querySelectorAll('.image-box').length;
+      const hasMeaningfulOverflow = (docH - winH > 420) && imageCount > 3;
+      topBtn.style.display = hasMeaningfulOverflow && scrollY > 120 ? 'block' : 'none';
+      bottomBtn.style.display = hasMeaningfulOverflow && (scrollY + winH < docH - 140) ? 'block' : 'none';
+    }
+  window.updateScrollBtns = toggleScrollBtns;
   const topBtn = document.getElementById('scrollToTopBtn');
   const bottomBtn = document.getElementById('scrollToBottomBtn');
   if (topBtn) {

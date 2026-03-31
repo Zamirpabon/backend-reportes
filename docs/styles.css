@@ -909,7 +909,8 @@ body {
 }
 @media (max-width: 600px) {
     .image-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px 14px;
     }
     .image-card {
         max-width: 99vw;
@@ -922,9 +923,9 @@ body {
 
 @media (max-width: 768px) {
     .image-grid {
-        grid-template-columns: 1fr;
-        max-width: 98vw;
-        gap: 24px 0;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        max-width: 100%;
+        gap: 22px 14px;
     }
     
     .image-box {
@@ -939,6 +940,39 @@ body {
     .container {
         margin: 10px;
         border-radius: 10px;
+    }
+
+    .image-label-desc-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .image-label {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .description {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    .status-select {
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+    }
+}
+
+@media (max-width: 420px) {
+    .image-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px 10px;
     }
 }
 

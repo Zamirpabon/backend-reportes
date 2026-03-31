@@ -1,127 +1,1161 @@
 const input = document.getElementById('imageInput');
 const grid = document.getElementById('gridContainer');
 const generateBtn = document.getElementById('generateBtn');
-const loadingText = document.getElementById('loadingText');
-const progressFill = document.getElementById('progressFill');
+const uploadLoader = document.getElementById('uploadLoader');
+const uploadLoaderTitle = document.getElementById('uploadLoaderTitle');
+const uploadLoaderCount = document.getElementById('uploadLoaderCount');
+const toastContainer = document.getElementById('toastContainer');
+const generateProgressText = document.getElementById('generateProgressText');
+const storageUsageCard = document.getElementById('storageUsageCard');
+const storageUsageMeta = document.getElementById('storageUsageMeta');
+const storageUsageFill = document.getElementById('storageUsageFill');
+const storageUsageDetail = document.getElementById('storageUsageDetail');
+const storageUsageFiles = document.getElementById('storageUsageFiles');
+const storageSessionsDropdown = document.getElementById('storageSessionsDropdown');
+const deviceCacheDetail = document.getElementById('deviceCacheDetail');
+const deviceQuotaDetail = document.getElementById('deviceQuotaDetail');
+const appLoaderOverlay = document.getElementById('appLoaderOverlay');
+const appLoaderLabel = document.getElementById('appLoaderLabel');
+const exportLoaderOverlay = document.getElementById('exportLoaderOverlay');
+const exportLoaderTitle = document.getElementById('exportLoaderTitle');
+const exportLoaderText = document.getElementById('exportLoaderText');
+const deleteLoaderOverlay = document.getElementById('deleteLoaderOverlay');
+const deleteLoaderTitle = document.getElementById('deleteLoaderTitle');
+const deleteLoaderText = document.getElementById('deleteLoaderText');
+const saveLoaderOverlay = document.getElementById('saveLoaderOverlay');
+const saveLoaderTitle = document.getElementById('saveLoaderTitle');
+const saveLoaderText = document.getElementById('saveLoaderText');
+const OPEN_SESSION_STORAGE_KEY = 'backend-reportes.currentSessionName';
+const SESSION_DRAFT_STORAGE_PREFIX = 'backend-reportes.sessionDraft.';
+const SESSION_AUTOSAVE_STORAGE_PREFIX = 'backend-reportes.sessionAutosave.';
+const LOOSE_AUTOSAVE_STORAGE_KEY = 'backend-reportes.looseAutosaveAt';
+const LOOSE_IMAGE_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const SESSION_AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000;
+const CLIENT_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const CLIENT_ALLOWED_IMAGE_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'image/avif'
+]);
 let imageCount = 0;
 let imagesData = [];
+let appInitialized = false;
+let currentSessionName = '';
+let hasUnsavedSessionChanges = false;
+let looseImageCountdownTimer = null;
+let looseImagesNoticeCollapsed = false;
+let looseImagesNoticePeekTimer = null;
+let deleteLoaderShownAt = 0;
+let saveLoaderShownAt = 0;
+let appLoaderShownAt = 0;
+let uploadLoaderShownAt = 0;
+let looseImagesNoticePeekHideTimer = null;
+let sessionAutosaveTicker = null;
+let isSessionAutosaving = false;
+let nextSessionAutosaveAt = 0;
+let undoStack = [];
+let sessionSummaries = [];
+let latestStorageUsage = null;
+const loadedImagePreviewSources = new Set();
+const MAX_UNDO_STATES = 25;
 
 // Agregar input para número inicial de imagen
 let imageStartNumber = 1;
 
 input.addEventListener('change', handleImageUpload);
 
-window.addEventListener('DOMContentLoaded', () => {
-    loadSession();
-    updateImageCounter();
-    addSessionControls(); // <-- Ensure session controls are initialized
-    setupSessionDropdownMenu();
-});
+function showToast(message, type = 'info') {
+    if (!toastContainer || !message) return;
 
-// --- NUEVO: Configuración para usar backend Node.js + MongoDB ---
-// Cambia la URL base según tu despliegue en local o en la nube
-const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://backend-reportes-lzfl.onrender.com'; // <-- URL pública de Render.com
+    while (toastContainer.children.length >= 3) {
+        toastContainer.removeChild(toastContainer.firstElementChild);
+    }
+
+    const icons = {
+        success: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+        info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 10v6"/><path d="M12 7h.01"/></svg>`,
+        error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>`
+    };
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <div class="toast-icon">${icons[type] || icons.info}</div>
+        <div class="toast-message">${message}</div>
+        <button type="button" class="toast-close" aria-label="Cerrar">×</button>
+    `;
+
+    const removeToast = () => {
+        if (toast.dataset.leaving === 'true') return;
+        toast.dataset.leaving = 'true';
+        toast.classList.add('is-leaving');
+        setTimeout(() => toast.remove(), 220);
+    };
+
+    toast.querySelector('.toast-close').onclick = removeToast;
+    toastContainer.appendChild(toast);
+    setTimeout(removeToast, 3000);
+}
+
+function showAppLoader(message = 'Cargando sesión...') {
+    if (!appLoaderOverlay) return;
+    if (appLoaderLabel) {
+        appLoaderLabel.textContent = message;
+    }
+    appLoaderShownAt = Date.now();
+    appLoaderOverlay.classList.add('is-visible');
+    appLoaderOverlay.setAttribute('aria-hidden', 'false');
+}
+
+async function hideAppLoader(minDuration = 0) {
+    if (!appLoaderOverlay) return;
+    const elapsed = Date.now() - appLoaderShownAt;
+    const remaining = Math.max(0, minDuration - elapsed);
+    if (remaining) {
+        await new Promise(resolve => setTimeout(resolve, remaining));
+    }
+    appLoaderOverlay.classList.remove('is-visible');
+    appLoaderOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function showExportLoader(title = 'Generando reporte Word', text = 'Estamos preparando tu documento...') {
+    if (!exportLoaderOverlay) return;
+    if (exportLoaderTitle) exportLoaderTitle.textContent = title;
+    if (exportLoaderText) exportLoaderText.textContent = text;
+    exportLoaderOverlay.classList.add('is-visible');
+    exportLoaderOverlay.setAttribute('aria-hidden', 'false');
+}
+
+function hideExportLoader() {
+    if (!exportLoaderOverlay) return;
+    exportLoaderOverlay.classList.remove('is-visible');
+    exportLoaderOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function showDeleteLoader(title = 'Eliminando...', text = 'Estamos limpiando la información seleccionada.') {
+    if (!deleteLoaderOverlay) return;
+    if (deleteLoaderTitle) deleteLoaderTitle.textContent = title;
+    if (deleteLoaderText) deleteLoaderText.textContent = text;
+    deleteLoaderShownAt = Date.now();
+    deleteLoaderOverlay.classList.add('is-visible');
+    deleteLoaderOverlay.setAttribute('aria-hidden', 'false');
+}
+
+async function hideDeleteLoader() {
+    if (!deleteLoaderOverlay) return;
+    const elapsed = Date.now() - deleteLoaderShownAt;
+    const remaining = Math.max(0, 1100 - elapsed);
+    if (remaining) {
+        await new Promise(resolve => setTimeout(resolve, remaining));
+    }
+    deleteLoaderOverlay.classList.remove('is-visible');
+    deleteLoaderOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function showDecisionDialog({
+    title = 'Confirmar acción',
+    message = '',
+    confirmText = 'Aceptar',
+    cancelText = 'Cancelar',
+    tertiaryText = '',
+    tone = 'primary',
+    showCancel = true,
+    icon = '•'
+} = {}) {
+    return new Promise((resolve) => {
+        const old = document.getElementById('appDecisionModal');
+        if (old) old.remove();
+        const actionCount = (showCancel ? 1 : 0) + (tertiaryText ? 1 : 0) + 1;
+        const actionsClass = [
+            'app-decision-actions',
+            !showCancel && !tertiaryText ? 'single-action' : '',
+            actionCount === 2 ? 'two-actions' : '',
+            actionCount >= 3 ? 'three-actions' : ''
+        ].filter(Boolean).join(' ');
+
+        const modal = document.createElement('div');
+        modal.id = 'appDecisionModal';
+        modal.className = 'app-decision-modal';
+        modal.innerHTML = `
+          <div class="app-decision-card">
+            <div class="app-decision-icon app-decision-icon-${tone}">${icon}</div>
+            <div class="app-decision-title">${title}</div>
+            <div class="app-decision-message">${message}</div>
+            <div class="${actionsClass}">
+              ${showCancel ? `<button type="button" class="app-decision-btn app-decision-btn-cancel" id="appDecisionCancel">${cancelText}</button>` : ''}
+              ${tertiaryText ? `<button type="button" class="app-decision-btn app-decision-btn-tertiary" id="appDecisionTertiary">${tertiaryText}</button>` : ''}
+              <button type="button" class="app-decision-btn app-decision-btn-confirm app-decision-btn-${tone}" id="appDecisionConfirm">${confirmText}</button>
+            </div>
+          </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const close = (result) => {
+            modal.remove();
+            resolve(result);
+        };
+
+        const confirmBtn = document.getElementById('appDecisionConfirm');
+        const cancelBtn = document.getElementById('appDecisionCancel');
+        const tertiaryBtn = document.getElementById('appDecisionTertiary');
+        if (confirmBtn) confirmBtn.onclick = () => close(true);
+        if (cancelBtn) cancelBtn.onclick = () => close(false);
+        if (tertiaryBtn) tertiaryBtn.onclick = () => close('tertiary');
+        modal.addEventListener('mousedown', (event) => {
+            if (event.target === modal) close(false);
+        });
+    });
+}
+
+function showUploadLoader(current = 0, total = 0, message = 'Subiendo fotos') {
+    if (uploadLoader) {
+        uploadLoader.style.display = 'flex';
+    }
+    uploadLoaderShownAt = uploadLoaderShownAt || Date.now();
+    if (uploadLoaderTitle) {
+        uploadLoaderTitle.textContent = message;
+    }
+    if (uploadLoaderCount) {
+        uploadLoaderCount.textContent = `${current}/${total}`;
+    }
+}
+
+function formatBytes(bytes) {
+    const safeBytes = Number(bytes || 0);
+    if (safeBytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const exponent = Math.min(Math.floor(Math.log(safeBytes) / Math.log(1024)), units.length - 1);
+    const value = safeBytes / (1024 ** exponent);
+    return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
+}
+
+function formatUsagePercent(percent) {
+    const safePercent = Number(percent || 0);
+    if (safePercent <= 0) return '0%';
+    if (safePercent < 0.001) return `${safePercent.toFixed(4)}%`;
+    if (safePercent < 0.01) return `${safePercent.toFixed(3)}%`;
+    if (safePercent < 0.1) return `${safePercent.toFixed(2)}%`;
+    if (safePercent < 1) return `${safePercent.toFixed(1)}%`;
+    return `${Math.round(safePercent)}%`;
+}
+
+function renderStorageSessionsDropdown() {
+    if (!storageSessionsDropdown) return;
+
+    const resolvedSessions = Array.isArray(sessionSummaries)
+        ? sessionSummaries.map((session) => ({
+            ...session,
+            photoCount: Number(session.photoCount || 0)
+        }))
+        : [];
+    const currentWorkspacePhotos = Array.isArray(imagesData) ? imagesData.length : 0;
+    const currentSessionIndex = currentSessionName
+        ? resolvedSessions.findIndex((session) => session.name === currentSessionName)
+        : -1;
+
+    if (currentSessionName && currentWorkspacePhotos > 0) {
+        if (currentSessionIndex >= 0) {
+            resolvedSessions[currentSessionIndex] = {
+                ...resolvedSessions[currentSessionIndex],
+                photoCount: Math.max(resolvedSessions[currentSessionIndex].photoCount, currentWorkspacePhotos)
+            };
+        } else {
+            resolvedSessions.push({
+                name: currentSessionName,
+                photoCount: currentWorkspacePhotos
+            });
+        }
+    }
+
+    const sessionsWithPhotos = resolvedSessions.filter((session) => session.photoCount > 0);
+    const totalSessionPhotos = sessionsWithPhotos.reduce((sum, session) => sum + session.photoCount, 0);
+    const looseWorkspacePhotos = !currentSessionName
+        ? imagesData.filter((img) => img && (img._scope === 'library' || !img._scope)).length
+        : 0;
+    const loosePhotosCount = !currentSessionName
+        ? Math.max(looseWorkspacePhotos, Math.max(0, Number(latestStorageUsage?.filesCount || 0) - totalSessionPhotos))
+        : 0;
+    const rows = [];
+
+    if (loosePhotosCount > 0) {
+        rows.push({
+            name: 'Sin sesión',
+            photoCount: loosePhotosCount
+        });
+    }
+
+    rows.push(...sessionsWithPhotos);
+
+    if (rows.length === 0) {
+        storageSessionsDropdown.innerHTML = `
+            <div class="storage-session-empty">Aún no hay sesiones con fotos guardadas.</div>
+        `;
+        return;
+    }
+
+    storageSessionsDropdown.innerHTML = `
+        <div class="storage-sessions-list">
+            ${rows.map((session) => `
+                <div class="storage-session-item">
+                    <span class="storage-session-name">${session.name}</span>
+                    <span class="storage-session-count">${session.photoCount} foto${session.photoCount === 1 ? '' : 's'}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+if (storageUsageFiles && storageSessionsDropdown) {
+    const setStorageDropdownOpen = (isOpen) => {
+        storageUsageCard?.classList.toggle('storage-dropdown-open', isOpen);
+        storageSessionsDropdown.classList.toggle('is-open', isOpen);
+        storageSessionsDropdown.hidden = !isOpen;
+        storageSessionsDropdown.setAttribute('aria-hidden', String(!isOpen));
+        storageUsageFiles.setAttribute('aria-expanded', String(isOpen));
+    };
+
+    setStorageDropdownOpen(false);
+
+    storageUsageFiles.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const isOpen = !storageSessionsDropdown.classList.contains('is-open');
+        setStorageDropdownOpen(isOpen);
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!storageUsageCard || !storageUsageCard.contains(event.target)) {
+            setStorageDropdownOpen(false);
+        }
+    });
+}
+
+function updateDeviceCacheUsage() {
+    if (!deviceCacheDetail) return;
+
+    try {
+        const cacheKeys = Object.keys(localStorage).filter((key) => key.startsWith(SESSION_DRAFT_STORAGE_PREFIX));
+        const totalChars = cacheKeys.reduce((sum, key) => {
+            const value = localStorage.getItem(key) || '';
+            return sum + key.length + value.length;
+        }, 0);
+        const totalBytes = totalChars * 2;
+        const draftsCount = cacheKeys.length;
+
+        deviceCacheDetail.textContent = totalBytes > 0
+            ? `${formatBytes(totalBytes)} usados en ${draftsCount} borrador${draftsCount === 1 ? '' : 'es'} local${draftsCount === 1 ? '' : 'es'} de esta app.`
+            : '0 B usados. No hay borradores locales pendientes en esta app.';
+    } catch (error) {
+        deviceCacheDetail.textContent = 'No se pudo leer el caché local del dispositivo.';
+    }
+
+    void updateDeviceQuotaEstimate();
+}
+
+async function updateDeviceQuotaEstimate() {
+    if (!deviceQuotaDetail) return;
+
+    if (!navigator.storage || typeof navigator.storage.estimate !== 'function') {
+        deviceQuotaDetail.textContent = 'Este navegador no expone una cuota local estimada para esta app.';
+        return;
+    }
+
+    try {
+        const estimate = await navigator.storage.estimate();
+        const usage = Number(estimate?.usage || 0);
+        const quota = Number(estimate?.quota || 0);
+        const usagePercent = quota > 0 ? (usage / quota) * 100 : 0;
+        const remaining = Math.max(0, quota - usage);
+
+        deviceQuotaDetail.textContent = quota > 0
+            ? `${formatBytes(usage)} usados, ${formatBytes(remaining)} libres de ${formatBytes(quota)} reportados por el navegador para esta app (${formatUsagePercent(usagePercent)}).`
+            : 'No se pudo calcular la cuota local estimada para esta app.';
+    } catch (error) {
+        deviceQuotaDetail.textContent = 'No se pudo calcular la cuota local estimada para esta app.';
+    }
+}
+
+function getImageDisplaySource(image, fallback = '') {
+    if (image?.signedUrl) return image.signedUrl;
+    if (typeof image?.src === 'string' && image.src) return image.src;
+    if (typeof image?.imageData === 'string' && image.imageData) return image.imageData;
+    return fallback;
+}
+
+function buildSessionImagePayload(image) {
+    const payload = {
+        description: image.description || '',
+        status: image.status || '',
+        createdAt: image.createdAt || new Date()
+    };
+
+    const currentSrc = typeof image.src === 'string' ? image.src : '';
+    const currentImageData = typeof image.imageData === 'string' ? image.imageData : '';
+
+    if (currentSrc.startsWith('data:image/')) {
+        payload.imageData = currentSrc;
+        return payload;
+    }
+
+    if (currentImageData.startsWith('data:image/')) {
+        payload.imageData = currentImageData;
+        return payload;
+    }
+
+    if (image.storagePath && image.mimeType) {
+        payload.storagePath = image.storagePath;
+        payload.mimeType = image.mimeType;
+        payload._id = image._id || '';
+        return payload;
+    }
+
+    payload.imageData = currentSrc || currentImageData;
+    return payload;
+}
+
+function cloneImageForUndo(image) {
+    return {
+        ...image,
+        crop: image?.crop ? { ...image.crop } : undefined
+    };
+}
+
+function createUndoSnapshot(label = 'Cambio') {
+    return {
+        label,
+        currentSessionName,
+        hasUnsavedSessionChanges,
+        nextSessionAutosaveAt,
+        imageStartNumber,
+        imagesData: imagesData.map(cloneImageForUndo)
+    };
+}
+
+function pushUndoState(label = 'Cambio') {
+    undoStack.push(createUndoSnapshot(label));
+    if (undoStack.length > MAX_UNDO_STATES) {
+        undoStack.shift();
+    }
+}
+
+function restoreUndoSnapshot(snapshot) {
+    if (!snapshot) return false;
+
+    imagesData = Array.isArray(snapshot.imagesData)
+        ? snapshot.imagesData.map(cloneImageForUndo)
+        : [];
+    imageCount = imagesData.length;
+    imageStartNumber = Number(snapshot.imageStartNumber || 1);
+    setCurrentSession(snapshot.currentSessionName || '');
+    hasUnsavedSessionChanges = Boolean(snapshot.hasUnsavedSessionChanges && currentSessionName);
+    nextSessionAutosaveAt = hasUnsavedSessionChanges ? Number(snapshot.nextSessionAutosaveAt || 0) : 0;
+
+    if (currentSessionName) {
+        persistSessionAutosaveDeadline(currentSessionName, nextSessionAutosaveAt);
+        if (hasUnsavedSessionChanges) {
+            persistSessionDraftCache();
+        } else {
+            clearSessionDraftCache(currentSessionName);
+        }
+    }
+
+    renderGrid();
+    updateImageCounter();
+    updateCurrentSessionBanner();
+    updateSessionActionLayout();
+    return true;
+}
+
+function undoLastAction() {
+    if (undoStack.length === 0) {
+        showToast('No hay acciones recientes para deshacer.', 'info');
+        return;
+    }
+
+    const snapshot = undoStack.pop();
+    if (restoreUndoSnapshot(snapshot)) {
+        showToast(`Se deshizo: ${snapshot.label}.`, 'info');
+    }
+}
+
+async function fetchStorageUsage() {
+    if (!storageUsageCard) return;
+    try {
+        const res = await apiFetch('/usage');
+        if (!res.ok) {
+            throw new Error('No se pudo consultar el uso del bucket');
+        }
+
+        const usage = await res.json();
+        latestStorageUsage = usage;
+        const usagePercent = Number.isFinite(usage.usagePercent) ? usage.usagePercent : 0;
+        storageUsageCard.hidden = false;
+        if (storageUsageFill) storageUsageFill.style.width = `${Math.max(4, usagePercent)}%`;
+        if (storageUsageMeta) {
+            storageUsageMeta.textContent = usage.filesCount > 0
+                ? `${formatBytes(usage.usedBytes)} de ${formatBytes(usage.limitBytes)} usados`
+                : `0 B de ${formatBytes(usage.limitBytes)} usados`;
+        }
+        if (storageUsageDetail) {
+            storageUsageDetail.textContent = usage.filesCount > 0
+                ? `${formatUsagePercent(usagePercent)} del espacio disponible para tus fotos`
+                : 'Aún no hay fotos guardadas';
+        }
+        if (storageUsageFiles) {
+            const filesCount = Number(usage.filesCount || 0);
+            storageUsageFiles.textContent = `${filesCount} foto${filesCount === 1 ? '' : 's'} guardada${filesCount === 1 ? '' : 's'}`;
+        }
+        renderStorageSessionsDropdown();
+        updateDeviceCacheUsage();
+    } catch (error) {
+        console.error('No se pudo cargar el uso de espacio:', error);
+        latestStorageUsage = null;
+        storageUsageCard.hidden = true;
+        updateDeviceCacheUsage();
+    }
+}
+
+async function hideUploadLoader() {
+    if (uploadLoader) {
+        const elapsed = Date.now() - uploadLoaderShownAt;
+        const remaining = Math.max(0, 5000 - elapsed);
+        if (remaining) {
+            await new Promise(resolve => setTimeout(resolve, remaining));
+        }
+        uploadLoader.style.display = 'none';
+    }
+    uploadLoaderShownAt = 0;
+}
+
+function showSaveLoader(title = 'Guardando cambios...', text = 'Estamos guardando tus fotos y datos de la sesión.') {
+    if (!saveLoaderOverlay) return;
+    if (saveLoaderTitle) saveLoaderTitle.textContent = title;
+    if (saveLoaderText) saveLoaderText.textContent = text;
+    saveLoaderShownAt = Date.now();
+    saveLoaderOverlay.classList.add('is-visible');
+    saveLoaderOverlay.setAttribute('aria-hidden', 'false');
+}
+
+async function hideSaveLoader() {
+    if (!saveLoaderOverlay) return;
+    const elapsed = Date.now() - saveLoaderShownAt;
+    const remaining = Math.max(0, 1100 - elapsed);
+    if (remaining) {
+        await new Promise(resolve => setTimeout(resolve, remaining));
+    }
+    saveLoaderOverlay.classList.remove('is-visible');
+    saveLoaderOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function formatRemainingLifetime(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const totalHours = totalSeconds / 3600;
+    const totalDays = Math.ceil(totalSeconds / 86400);
+
+    if (totalHours > 12) {
+        if (totalDays <= 1) return '1 día';
+        return `${totalDays} días`;
+    }
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+}
+
+function getLooseImagesRemainingMs() {
+    const looseImages = !currentSessionName
+        ? imagesData.filter((img) => img && (img._scope === 'library' || !img._scope))
+        : [];
+
+    if (looseImages.length === 0) {
+        return 0;
+    }
+
+    const expirationTimestamps = looseImages
+        .map((img) => new Date(img.createdAt || Date.now()).getTime() + LOOSE_IMAGE_RETENTION_MS)
+        .filter((value) => Number.isFinite(value));
+
+    if (expirationTimestamps.length === 0) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(...expirationTimestamps) - Date.now());
+}
+
+function updateLooseImagesExpiryNotice() {
+    const existing = document.getElementById('looseImagesExpiryNotice');
+    if (existing) existing.remove();
+    if (looseImagesNoticePeekTimer) {
+        clearInterval(looseImagesNoticePeekTimer);
+        looseImagesNoticePeekTimer = null;
+    }
+    if (looseImagesNoticePeekHideTimer) {
+        clearTimeout(looseImagesNoticePeekHideTimer);
+        looseImagesNoticePeekHideTimer = null;
+    }
+}
+
+function ensureLooseImagesCountdown() {
+    if (looseImageCountdownTimer) {
+        clearInterval(looseImageCountdownTimer);
+    }
+    looseImageCountdownTimer = setInterval(() => {
+        updateLooseImagesExpiryNotice();
+        if (currentSessionName || imagesData.length > 0 || nextSessionAutosaveAt) {
+            updateCurrentSessionBanner();
+        }
+    }, 1000);
+    updateLooseImagesExpiryNotice();
+}
+
+function formatAutosaveCountdown(ms) {
+    const safeMs = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(safeMs / 60);
+    const seconds = safeMs % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function persistLooseAutosaveDeadline(timestamp = 0) {
+    try {
+        if (timestamp && Number(timestamp) > Date.now()) {
+            localStorage.setItem(LOOSE_AUTOSAVE_STORAGE_KEY, String(Number(timestamp)));
+        } else {
+            localStorage.removeItem(LOOSE_AUTOSAVE_STORAGE_KEY);
+        }
+    } catch (error) {
+        // Ignorar errores del almacenamiento local.
+    }
+}
+
+function readLooseAutosaveDeadline() {
+    try {
+        const raw = localStorage.getItem(LOOSE_AUTOSAVE_STORAGE_KEY);
+        const value = Number(raw || 0);
+        return Number.isFinite(value) ? value : 0;
+    } catch (error) {
+        return 0;
+    }
+}
+
+function resetSessionAutosaveDeadline() {
+    nextSessionAutosaveAt = Date.now() + SESSION_AUTOSAVE_INTERVAL_MS;
+    if (currentSessionName) {
+        persistSessionAutosaveDeadline(currentSessionName, nextSessionAutosaveAt);
+    } else {
+        persistLooseAutosaveDeadline(nextSessionAutosaveAt);
+    }
+}
+
+function ensureSessionAutosave() {
+    if (sessionAutosaveTicker) {
+        clearInterval(sessionAutosaveTicker);
+    }
+
+    sessionAutosaveTicker = setInterval(async () => {
+        if (!hasUnsavedSessionChanges || !nextSessionAutosaveAt || isSessionAutosaving) {
+            return;
+        }
+
+        if (Date.now() < nextSessionAutosaveAt) {
+            return;
+        }
+
+        try {
+            if (currentSessionName) {
+                await persistCurrentSessionChanges({ silent: true, source: 'autosave' });
+                showToast(`Auto-guardado completado en "${currentSessionName}".`, 'success');
+            } else {
+                await saveSession();
+                markSessionDirty(false);
+                fetchStorageUsage();
+                showToast('Auto-guardado completado en Sin sesión.', 'success');
+            }
+        } catch (error) {
+            console.error('Error en auto-guardado de sesión:', error);
+            showToast(currentSessionName ? `No se pudo auto-guardar la sesión "${currentSessionName}".` : 'No se pudo auto-guardar Sin sesión.', 'error');
+            resetSessionAutosaveDeadline();
+            updateCurrentSessionBanner();
+        }
+    }, 1000);
+}
+
+async function initializeApp() {
+    if (appInitialized) return;
+    appInitialized = true;
+    updateImageCounter();
+    addSessionControls();
+    setupSessionDropdownMenu();
+    ensureLooseImagesCountdown();
+    ensureSessionAutosave();
+    showToast('Conectando con el servidor de fotos...', 'info');
+    await resolveApiBaseUrl();
+    showToast('Servidor conectado correctamente.', 'success');
+    fetchStorageUsage();
+    updateDeviceCacheUsage();
+    await restoreInitialWorkspace();
+}
+
+window.addEventListener('DOMContentLoaded', initializeApp);
+
+// --- Configuración de backend ---
+const DEFAULT_REMOTE_API_BASE_URL = 'https://backend-reportes-lzfl.onrender.com';
+const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1'];
+let API_BASE_URL = '';
+let apiResolutionPromise = null;
+
+function getApiCandidates() {
+    const candidates = [];
+    const configuredApi =
+        (typeof window !== 'undefined' && typeof window.REPORTES_API_BASE_URL === 'string'
+            ? window.REPORTES_API_BASE_URL
+            : '') ||
+        localStorage.getItem('backend-reportes.apiBaseUrl') ||
+        '';
+
+    const sameOriginApi = `${window.location.protocol}//${window.location.host}`;
+    const forceLocalApi = localStorage.getItem('backend-reportes.useLocalApi') === 'true';
+    const isLocalHost = LOCAL_HOSTNAMES.includes(window.location.hostname);
+
+    if (configuredApi) candidates.push(configuredApi.trim());
+    if (isLocalHost && window.location.port === '3001') {
+        candidates.push(sameOriginApi);
+        if (forceLocalApi && sameOriginApi !== 'http://localhost:3001') {
+            candidates.push('http://localhost:3001');
+        }
+    } else if (isLocalHost && forceLocalApi) {
+        candidates.push('http://localhost:3001');
+        candidates.push(DEFAULT_REMOTE_API_BASE_URL);
+    } else if (isLocalHost) {
+        candidates.push(DEFAULT_REMOTE_API_BASE_URL);
+    } else {
+        candidates.push(sameOriginApi);
+        if (sameOriginApi !== DEFAULT_REMOTE_API_BASE_URL) {
+            candidates.push(DEFAULT_REMOTE_API_BASE_URL);
+        }
+    }
+
+    return [...new Set(candidates.filter(Boolean).map((url) => url.replace(/\/+$/, '')))];
+}
+
+async function canReachApi(baseUrl) {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const response = await fetch(`${baseUrl}/health`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return response.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function waitForApi(baseUrl, options = {}) {
+    const {
+        timeoutMs = 45000,
+        retryDelayMs = 2500
+    } = options;
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+        // eslint-disable-next-line no-await-in-loop
+        const reachable = await canReachApi(baseUrl);
+        if (reachable) {
+            return true;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+
+    return false;
+}
+
+async function resolveApiBaseUrl() {
+    if (API_BASE_URL) {
+        return API_BASE_URL;
+    }
+
+    if (apiResolutionPromise) {
+        return apiResolutionPromise;
+    }
+
+    apiResolutionPromise = (async () => {
+        const candidates = getApiCandidates();
+
+        for (const candidate of candidates) {
+            const isRemoteCandidate = /^https?:\/\//i.test(candidate) && !candidate.includes('localhost:3001');
+            // eslint-disable-next-line no-await-in-loop
+            const reachable = await waitForApi(candidate, {
+                timeoutMs: isRemoteCandidate ? 45000 : 5000,
+                retryDelayMs: isRemoteCandidate ? 3000 : 1500
+            });
+            if (reachable) {
+                API_BASE_URL = candidate;
+                return API_BASE_URL;
+            }
+        }
+
+        API_BASE_URL = candidates.includes(DEFAULT_REMOTE_API_BASE_URL)
+            ? DEFAULT_REMOTE_API_BASE_URL
+            : (candidates[0] || DEFAULT_REMOTE_API_BASE_URL);
+        return API_BASE_URL;
+    })();
+
+    try {
+        return await apiResolutionPromise;
+    } finally {
+        apiResolutionPromise = null;
+    }
+}
+
+async function apiFetch(path, options) {
+    let baseUrl = await resolveApiBaseUrl();
+
+    try {
+        return await fetch(`${baseUrl}${path}`, options);
+    } catch (error) {
+        API_BASE_URL = '';
+        baseUrl = await resolveApiBaseUrl();
+        return fetch(`${baseUrl}${path}`, options);
+    }
+}
 
 // --- Reemplazar localStorage por backend ---
 async function saveSession() {
-    // Guardar todas las imágenes (actualizar descripción/estado)
-    for (let img of imagesData) {
-        if (img._id) {
-            await fetch(`${API_BASE_URL}/image/${img._id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ description: img.description, status: img.status })
-            });
+    syncDescriptionsFromDOM();
+    const requests = imagesData
+        .filter(img => img._id)
+        .map(img => apiFetch(`/image/${img._id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: img.description, status: img.status })
+        }));
+
+    await Promise.all(requests);
+}
+
+async function persistCurrentSessionChanges(options = {}) {
+    const {
+        name = currentSessionName,
+        silent = false,
+        source = 'manual'
+    } = options;
+
+    const safeName = (name || '').trim();
+
+    if (!safeName) {
+        throw new Error('No hay una sesión abierta para guardar.');
+    }
+
+    syncDescriptionsFromDOM && syncDescriptionsFromDOM();
+    const images = imagesData.map(buildSessionImagePayload);
+
+    if (source === 'autosave') {
+        isSessionAutosaving = true;
+    }
+
+    const shouldShowSaveLoader = source !== 'autosave' && !silent;
+
+    try {
+        if (shouldShowSaveLoader) {
+            showSaveLoader('Guardando cambios...', `Estamos actualizando la sesión "${safeName}".`);
+        }
+        const res = await apiFetch('/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: safeName, images })
+        });
+
+        if (!res.ok) {
+            throw new Error(await res.text());
+        }
+
+        const savedSession = await res.json();
+        if (savedSession && Array.isArray(savedSession.images)) {
+            imagesData = savedSession.images.map(img => ({
+                ...img,
+                imageData: '',
+                src: getImageDisplaySource(img),
+                _scope: 'session'
+            }));
+            imageCount = imagesData.length;
+            renderGrid();
+            updateImageCounter();
+        }
+
+        setCurrentSession(safeName);
+        markSessionDirty(false);
+        clearSessionDraftCache(safeName);
+        await loadSessionList(safeName);
+        fetchStorageUsage();
+
+        if (!silent) {
+            showToast(`Cambios guardados en la sesión "${safeName}".`, 'success');
+        }
+
+        return savedSession;
+    } finally {
+        if (shouldShowSaveLoader) {
+            await hideSaveLoader();
+        }
+        if (source === 'autosave') {
+            isSessionAutosaving = false;
         }
     }
 }
 
 async function loadSession() {
-    const res = await fetch(`${API_BASE_URL}/images`);
+    const res = await apiFetch('/images?includeImageData=false');
+    if (!res.ok) {
+        throw new Error('No se pudieron cargar las imágenes');
+    }
     const data = await res.json();
-    // Asignar imageData como src para cada imagen
-    imagesData = data.map(img => ({ ...img, src: img.imageData }));
+    imagesData = data.map(img => ({ ...img, src: getImageDisplaySource(img), _scope: 'library' }));
     imageCount = imagesData.length;
     imageStartNumber = 1;
+    const looseAutosaveAt = readLooseAutosaveDeadline();
+    if (!currentSessionName && imagesData.length > 0 && looseAutosaveAt > Date.now()) {
+        hasUnsavedSessionChanges = true;
+        nextSessionAutosaveAt = looseAutosaveAt;
+    }
     renderGrid();
     if (imagesData.length > 0) generateBtn.disabled = false;
 }
 
-// --- Subir imágenes al backend ---
-async function handleImageUpload(event) {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
-    loadingText.style.display = 'block';
-    progressFill.style.width = '0%';
-    let newImages = [];
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        // Leer archivo como base64
-        const base64 = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
-        // Enviar al backend como JSON
-        const res = await fetch(`${API_BASE_URL}/upload`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageData: base64, description: '', status: '' })
-        });
-        const img = await res.json();
-        img.src = img.imageData;
-        newImages.push(img);
-        progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
+function getStoredOpenSession() {
+    try {
+        return localStorage.getItem(OPEN_SESSION_STORAGE_KEY) || '';
+    } catch (error) {
+        return '';
     }
-    await loadSession(); // <-- Recargar desde backend
-    renderGrid();
-    loadingText.style.display = 'none';
-    generateBtn.disabled = imagesData.length === 0;
-    await saveSession(); // <-- Asegura que la sesión seleccionada se actualiza
-    updateImageCounter();
+}
+
+function getSessionDraftStorageKey(sessionName) {
+    return `${SESSION_DRAFT_STORAGE_PREFIX}${(sessionName || '').trim()}`;
+}
+
+function getSessionAutosaveStorageKey(sessionName) {
+    return `${SESSION_AUTOSAVE_STORAGE_PREFIX}${(sessionName || '').trim()}`;
+}
+
+function persistSessionAutosaveDeadline(sessionName, timestamp = 0) {
+    const safeName = (sessionName || '').trim();
+    if (!safeName) return;
+
+    try {
+        if (timestamp && Number(timestamp) > Date.now()) {
+            localStorage.setItem(getSessionAutosaveStorageKey(safeName), String(Number(timestamp)));
+        } else {
+            localStorage.removeItem(getSessionAutosaveStorageKey(safeName));
+        }
+    } catch (error) {
+        // Ignorar errores del almacenamiento local.
+    }
+}
+
+function readSessionAutosaveDeadline(sessionName) {
+    const safeName = (sessionName || '').trim();
+    if (!safeName) return 0;
+
+    try {
+        const raw = localStorage.getItem(getSessionAutosaveStorageKey(safeName));
+        const value = Number(raw || 0);
+        return Number.isFinite(value) ? value : 0;
+    } catch (error) {
+        return 0;
+    }
+}
+
+function readSessionDraftCache(sessionName) {
+    const safeName = (sessionName || '').trim();
+    if (!safeName) return null;
+
+    try {
+        const raw = localStorage.getItem(getSessionDraftStorageKey(safeName));
+        return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function clearSessionDraftCache(sessionName = currentSessionName) {
+    const safeName = (sessionName || '').trim();
+    if (!safeName) return;
+
+    try {
+        localStorage.removeItem(getSessionDraftStorageKey(safeName));
+        localStorage.removeItem(getSessionAutosaveStorageKey(safeName));
+    } catch (error) {
+        // Ignorar errores del caché local.
+    }
+}
+
+function serializeSessionDraftImage(image) {
+    return {
+        _id: image._id || '',
+        _draftId: image._draftId || '',
+        _scope: image._scope || 'session',
+        _localDraft: Boolean(image._localDraft),
+        description: image.description || '',
+        status: image.status || '',
+        createdAt: image.createdAt || new Date().toISOString(),
+        storagePath: image.storagePath || '',
+        mimeType: image.mimeType || '',
+        src: image.src || '',
+        imageData: image.imageData || ''
+    };
+}
+
+function persistSessionDraftCache() {
+    if (!currentSessionName || !hasUnsavedSessionChanges) {
+        return;
+    }
+
+    try {
+        localStorage.setItem(getSessionDraftStorageKey(currentSessionName), JSON.stringify({
+            sessionName: currentSessionName,
+            imageStartNumber,
+            updatedAt: new Date().toISOString(),
+            autosaveAt: nextSessionAutosaveAt || 0,
+            images: imagesData.map(serializeSessionDraftImage)
+        }));
+    } catch (error) {
+        // Ignorar errores del caché local.
+    }
+}
+
+function restoreSessionDraftIntoState(sessionName) {
+    const draft = readSessionDraftCache(sessionName);
+    if (!draft || !Array.isArray(draft.images) || draft.images.length === 0) {
+        return false;
+    }
+
+    imagesData = draft.images.map((img) => ({
+        ...img,
+        src: getImageDisplaySource(img),
+        imageData: img.imageData || (typeof img.src === 'string' && img.src.startsWith('data:image/') ? img.src : ''),
+        _scope: img._scope || (img._localDraft ? 'session-draft' : 'session')
+    }));
+    imageCount = imagesData.length;
+    imageStartNumber = Number(draft.imageStartNumber || 1);
+    hasUnsavedSessionChanges = true;
+    const cachedAutosaveAt = Number(draft.autosaveAt || readSessionAutosaveDeadline(sessionName) || 0);
+    nextSessionAutosaveAt = cachedAutosaveAt > Date.now()
+        ? cachedAutosaveAt
+        : Date.now() + SESSION_AUTOSAVE_INTERVAL_MS;
+    persistSessionAutosaveDeadline(sessionName, nextSessionAutosaveAt);
+    return true;
+}
+
+function persistOpenSession(name = '') {
+    try {
+        if (name) {
+            localStorage.setItem(OPEN_SESSION_STORAGE_KEY, name);
+        } else {
+            localStorage.removeItem(OPEN_SESSION_STORAGE_KEY);
+        }
+    } catch (error) {
+        // Ignorar errores de almacenamiento local para no romper la UI.
+    }
+}
+
+async function restoreInitialWorkspace() {
+    const storedSessionName = getStoredOpenSession();
+
+    try {
+        await loadSessionList(storedSessionName);
+
+        if (storedSessionName) {
+            const sessionSelect = document.getElementById('sessionList');
+            if (sessionSelect && sessionSelect.value === storedSessionName) {
+                await loadSessionFromDB({ sessionName: storedSessionName, silent: true });
+                return;
+            }
+
+            setCurrentSession('');
+        }
+
+        showAppLoader('Cargando fotos sin sesión...');
+        await loadSession();
+    } catch (error) {
+        console.error('Error inicializando imágenes:', error);
+        showToast('No se pudieron cargar las imágenes iniciales.', 'error');
+    } finally {
+        await hideAppLoader(5000);
+    }
 }
 
 // --- Eliminar imagen en backend ---
 window.removeImage = async function(idx, event) {
     event.stopPropagation();
     const img = imagesData[idx];
-    if (img._id) {
-        await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
+    const isSessionWorkspaceImage = img && (img._scope === 'session' || img._scope === 'session-draft');
+
+    if (!isSessionWorkspaceImage && img._id) {
+        const res = await apiFetch(`/image/${img._id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            showToast('No se pudo eliminar la imagen.', 'error');
+            return;
+        }
     }
-    // imagesData.splice(idx, 1);
-    await loadSession(); // <-- Recargar desde backend
+    if (isSessionWorkspaceImage) {
+        pushUndoState('Eliminar imagen');
+    }
+    imagesData.splice(idx, 1);
+    imageCount = imagesData.length;
     renderGrid();
     if (imagesData.length === 0) {
         generateBtn.disabled = true;
     }
     updateImageCounter();
-    saveSession();
+
+    if (isSessionWorkspaceImage && currentSessionName) {
+        markSessionDirty(true);
+        showToast('Imagen quitada de la sesión abierta. Guarda los cambios para aplicarlo.', 'info');
+    }
 };
 
 // --- Actualizar descripción/estado en backend ---
 window.updateImageData = async function(idx, field, value) {
     if (!imagesData[idx]) return;
+    if ((imagesData[idx][field] || '') === value) return;
+    if (currentSessionName) {
+        pushUndoState(field === 'status' ? 'Cambiar estado' : 'Editar descripción');
+    }
     imagesData[idx][field] = value;
-    if (imagesData[idx]._id) {
-        await fetch(`${API_BASE_URL}/image/${imagesData[idx]._id}`, {
+    if (currentSessionName) {
+        markSessionDirty(true);
+    }
+    const card = document.querySelector(`.image-box[data-index="${idx}"]`);
+    if (card && field === 'status') {
+        card.classList.remove('card-verde', 'card-amarillo', 'card-rojo');
+        const newClass = getCardStatusClass(value);
+        if (newClass) card.classList.add(newClass);
+    }
+    if (imagesData[idx]._id && !currentSessionName) {
+        const res = await apiFetch(`/image/${imagesData[idx]._id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ description: imagesData[idx].description, status: imagesData[idx].status })
         });
+        if (!res.ok) {
+            showToast('No se pudo actualizar la imagen.', 'error');
+        }
     }
     updateImageCounter();
-    saveSession();
 };
-
-// --- Al cargar la página, cargar imágenes desde backend ---
-window.addEventListener('DOMContentLoaded', () => {
-    loadSession();
-});
 
 // --- Contador y límite de imágenes ---
 // Eliminar MAX_IMAGES y mostrar solo la cantidad de imágenes subidas
 function updateImageCounter() {
+    updateCurrentSessionBanner();
+    updateLooseImagesExpiryNotice();
     let counter = document.getElementById('imageCounter');
     if (!counter) {
         counter = document.createElement('div');
@@ -133,17 +1167,22 @@ function updateImageCounter() {
     let total = imagesData.length;
     // Input bonito para el número inicial
     counter.innerHTML =
-      `<span style='margin-right:18px;display:inline-flex;align-items:center;gap:6px;'>
-        <b>Num. inicial:</b>
+      `<span class="stat-pill stat-pill-input">
+        <b class="stat-label">Num. inicial</b>
         <input type='number' id='imageStartNumberInput' min='1' value='${imageStartNumber}' style='width:60px;font-size:1.08rem;font-weight:bold;border-radius:8px;border:2px solid #3498db;padding:2px 8px;color:#2c3e50;text-align:center;'/>
       </span>` +
-      `<span id="stateCounter" style="margin-right:18px;">
-        <span style="font-weight:bold;color:#2c3e50;">Estados seleccionados:</span> <span id="stateCountValue"></span> / ${total}
+      `<span id="stateCounter" class="stat-pill">
+        <span class="stat-label">Estados seleccionados</span>
+        <span class="stat-value"><span id="stateCountValue"></span> / ${total}</span>
       </span>` +
-      `<span id="descCounter" style="margin-right:18px;">
-        <span style="font-weight:bold;color:#2c3e50;">Descripciones llenas:</span> <span id="descCountValue"></span> / ${total}
+      `<span id="descCounter" class="stat-pill">
+        <span class="stat-label">Descripciones llenas</span>
+        <span class="stat-value"><span id="descCountValue"></span> / ${total}</span>
       </span>` +
-      `Imágenes subidas: ${total}`;
+      `<span class="stat-pill stat-pill-total">
+        <span class="stat-label">Imágenes subidas</span>
+        <span class="stat-value">${total}</span>
+      </span>`;
     // Evento para el input de número inicial
     const input = counter.querySelector('#imageStartNumberInput');
     if (input) {
@@ -154,7 +1193,6 @@ function updateImageCounter() {
             imageStartNumber = val;
             renderGrid();
             updateImageCounter();
-            saveSession();
         };
     }
     let descFilled = imagesData.filter(img => (img.description && img.description.trim().length > 0)).length;
@@ -163,6 +1201,7 @@ function updateImageCounter() {
     let stateCountValue = document.getElementById('stateCountValue');
     if (descCountValue) descCountValue.textContent = descFilled;
     if (stateCountValue) stateCountValue.textContent = stateFilled;
+    updateGenerateSummary(total, descFilled, stateFilled);
     // Alternar clase en body para mostrar/ocultar el botón y altura card
     if (typeof document !== 'undefined') {
         if (total > 0) {
@@ -173,76 +1212,368 @@ function updateImageCounter() {
     }
 }
 
-// --- Integrar límite en handleImageUpload ---
-// Eliminar validación de límite de imágenes
-const originalHandleImageUpload = handleImageUpload;
-handleImageUpload = async function(event) {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
-    await originalHandleImageUpload.call(this, event);
-    saveSession();
-    updateImageCounter();
-};
+function setCurrentSession(name = '') {
+    currentSessionName = (name || '').trim();
+    persistOpenSession(currentSessionName);
+
+    if (!currentSessionName) {
+        hasUnsavedSessionChanges = false;
+        nextSessionAutosaveAt = 0;
+        persistSessionAutosaveDeadline('', 0);
+    }
+
+    const sessionSelect = document.getElementById('sessionList');
+    if (sessionSelect) {
+        sessionSelect.value = currentSessionName || '';
+    }
+
+    const sessionInput = document.getElementById('sessionNameInput');
+    if (sessionInput) {
+        sessionInput.value = currentSessionName;
+    }
+
+    const sessionNameLabel = document.getElementById('sessionNameLabel');
+    if (sessionNameLabel) {
+        sessionNameLabel.textContent = currentSessionName
+            ? 'Nombre de la sesión actual'
+            : 'Nombrar sesión actual para guardar';
+    }
+
+    updateCurrentSessionBanner();
+    updateLooseImagesExpiryNotice();
+    updateSessionActionLayout();
+}
+
+function updateCurrentSessionBanner() {
+    const gridParent = grid && grid.parentElement ? grid.parentElement : null;
+    if (!gridParent) return;
+
+    let banner = document.getElementById('currentSessionBanner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'currentSessionBanner';
+        banner.className = 'current-session-banner';
+        gridParent.insertBefore(banner, gridParent.firstChild);
+    }
+
+    const hasDraftWithoutSession = !currentSessionName && imagesData.length > 0;
+
+    if (currentSessionName || hasDraftWithoutSession) {
+        const bannerTitle = currentSessionName || 'Sin titulo guardado';
+        const bannerKicker = currentSessionName ? 'Sesion abierta' : 'Sin sesion';
+        const bannerState = currentSessionName
+            ? (hasUnsavedSessionChanges ? 'Cambios sin guardar' : 'Todo guardado')
+            : (hasUnsavedSessionChanges ? 'Cambios sin guardar en Sin sesión' : 'Todo guardado en Sin sesión');
+        const autosaveLabel = hasUnsavedSessionChanges && nextSessionAutosaveAt
+            ? `Auto-guardado en ${formatAutosaveCountdown(nextSessionAutosaveAt - Date.now())}`
+            : 'Sin cambios pendientes';
+        const looseImagesRemaining = !currentSessionName ? getLooseImagesRemainingMs() : 0;
+        const looseExpiryMarkup = !currentSessionName && looseImagesRemaining
+            ? `<span class="current-session-expiry">Se borrará en ${formatRemainingLifetime(looseImagesRemaining)}</span>`
+            : '';
+
+        banner.innerHTML = `
+            <div class="current-session-copy">
+                <div class="current-session-head">
+                    <span class="current-session-kicker">${bannerKicker}</span>
+                    ${looseExpiryMarkup}
+                </div>
+                <strong class="current-session-name">${bannerTitle}</strong>
+            </div>
+            <div class="current-session-meta">
+                <span class="current-session-autosave ${(hasUnsavedSessionChanges && nextSessionAutosaveAt) ? 'is-counting' : 'is-idle'}">${autosaveLabel}</span>
+                <span class="current-session-state ${!hasUnsavedSessionChanges ? 'is-saved' : 'is-dirty'}">
+                    ${bannerState}
+                </span>
+            </div>
+        `;
+        banner.classList.toggle('is-loose-session', !currentSessionName);
+        banner.classList.add('is-visible');
+    } else {
+        banner.innerHTML = '';
+        banner.classList.remove('is-loose-session');
+        banner.classList.remove('is-visible');
+    }
+}
+
+function markSessionDirty(isDirty = true) {
+    const wasDirty = hasUnsavedSessionChanges;
+    const canTrackWorkspaceChanges = Boolean(currentSessionName || imagesData.length > 0);
+    hasUnsavedSessionChanges = canTrackWorkspaceChanges && isDirty;
+    if (currentSessionName || (!currentSessionName && imagesData.length > 0)) {
+        if (hasUnsavedSessionChanges) {
+            if (!wasDirty || !nextSessionAutosaveAt || nextSessionAutosaveAt <= Date.now()) {
+                resetSessionAutosaveDeadline();
+            } else {
+                if (currentSessionName) {
+                    persistSessionAutosaveDeadline(currentSessionName, nextSessionAutosaveAt);
+                } else {
+                    persistLooseAutosaveDeadline(nextSessionAutosaveAt);
+                }
+            }
+            if (currentSessionName) {
+                persistSessionDraftCache();
+            }
+        } else {
+            nextSessionAutosaveAt = 0;
+            if (currentSessionName) {
+                persistSessionAutosaveDeadline(currentSessionName, 0);
+                clearSessionDraftCache(currentSessionName);
+            } else {
+                persistLooseAutosaveDeadline(0);
+            }
+        }
+    }
+    updateCurrentSessionBanner();
+}
+
+function updateSessionActionLayout() {
+    const select = document.getElementById('sessionList');
+    const sessionPanel = document.querySelector('.session-panel');
+    const reloadSavedBtn = document.getElementById('reloadSavedBtn');
+    const loadSessionBtn = document.getElementById('loadSessionBtn');
+    const saveChangesBtn = document.getElementById('saveChangesBtn');
+    const selectedName = select && select.value ? select.value.trim() : '';
+    const hasDifferentSelectedSession = Boolean(selectedName && selectedName !== currentSessionName);
+    const hasSelectedSession = Boolean((selectedName || currentSessionName) && selectedName !== currentSessionName);
+
+    if (sessionPanel) {
+        sessionPanel.classList.toggle('has-selected-session', hasSelectedSession);
+    }
+
+    if (loadSessionBtn) {
+        loadSessionBtn.style.display = hasDifferentSelectedSession ? 'inline-flex' : 'none';
+        const loadLabel = loadSessionBtn.querySelector('span:last-child');
+        if (loadLabel) {
+            loadLabel.textContent = hasDifferentSelectedSession ? `Cargar ${selectedName}` : 'Cargar';
+        }
+    }
+
+    if (saveChangesBtn) {
+        const label = saveChangesBtn.querySelector('span:last-child');
+        if (label) {
+            if (hasDifferentSelectedSession) {
+                label.textContent = 'Guardar en la sesión seleccionada';
+            } else {
+                label.textContent = 'Guardar';
+            }
+        }
+    }
+
+    if (reloadSavedBtn) {
+        const canReloadSaved = Boolean(currentSessionName);
+        reloadSavedBtn.style.display = canReloadSaved ? 'inline-flex' : 'none';
+    }
+}
+
+async function handlePrimarySessionSave() {
+    const select = document.getElementById('sessionList');
+    const selectedName = select && select.value ? select.value.trim() : '';
+    const typedNameInput = document.getElementById('sessionNameInput');
+    const typedName = typedNameInput && typedNameInput.value ? typedNameInput.value.trim() : '';
+    const hasDifferentSelectedSession = Boolean(currentSessionName && selectedName && selectedName !== currentSessionName);
+
+    if (!currentSessionName && typedName) {
+        return saveSessionToDB();
+    }
+
+    if (currentSessionName || hasDifferentSelectedSession) {
+        return window.saveChangesToCurrentSession();
+    }
+
+    return saveSessionToDB();
+}
+
+function shouldConfirmSessionSwitch(nextSelection = '') {
+    return Boolean(currentSessionName && hasUnsavedSessionChanges && nextSelection !== currentSessionName);
+}
+
+async function discardUnsavedSessionDrafts() {
+    const draftImages = imagesData.filter((img) => img && img._scope === 'session-draft' && img._id);
+    if (draftImages.length === 0) {
+        clearSessionDraftCache(currentSessionName);
+        return;
+    }
+
+    await Promise.allSettled(
+        draftImages.map((img) =>
+            apiFetch(`/image/${img._id}`, { method: 'DELETE' })
+        )
+    );
+    clearSessionDraftCache(currentSessionName);
+}
+
+async function switchToLibraryWorkspace() {
+    showAppLoader('Volviendo a fotos sin sesión...');
+    try {
+        await loadSession();
+        setCurrentSession('');
+        markSessionDirty(false);
+        renderGrid();
+        updateImageCounter();
+    } finally {
+        hideAppLoader();
+    }
+}
+
+function updateGenerateSummary(total, descFilled, stateFilled) {
+    const completed = imagesData.filter(img =>
+        img.description && img.description.trim().length > 0 && img.status && img.status !== ''
+    ).length;
+    const green = imagesData.filter(img => img.status === 'verde').length;
+    const yellow = imagesData.filter(img => img.status === 'amarillo').length;
+    const red = imagesData.filter(img => img.status === 'rojo').length;
+
+    if (generateProgressText) {
+        generateProgressText.textContent = `${completed}/${total} imágenes completas`;
+    }
+
+    const summaryGreen = document.getElementById('summaryGreen');
+    const summaryYellow = document.getElementById('summaryYellow');
+    const summaryRed = document.getElementById('summaryRed');
+    if (summaryGreen) summaryGreen.textContent = green;
+    if (summaryYellow) summaryYellow.textContent = yellow;
+    if (summaryRed) summaryRed.textContent = red;
+
+    const generateProgressStatus = document.getElementById('generateProgressStatus');
+    if (generateProgressStatus) {
+        if (total === 0) {
+            generateProgressStatus.textContent = 'Carga al menos una imagen para empezar el informe.';
+        } else if (completed === total) {
+            generateProgressStatus.textContent = 'Todo está listo para generar el reporte.';
+        } else {
+            generateProgressStatus.textContent = `Faltan ${total - completed} imagen${total - completed === 1 ? '' : 'es'} por completar antes del reporte final.`;
+        }
+    }
+
+    if (generateBtn) {
+        const isReady = total > 0 && completed === total;
+        const canGenerate = total > 0;
+        generateBtn.disabled = !canGenerate;
+        generateBtn.classList.toggle('generate-btn-ready', isReady);
+        generateBtn.classList.toggle('generate-btn-pending', canGenerate && !isReady);
+        generateBtn.classList.toggle('generate-btn-disabled', !canGenerate);
+        generateBtn.title = canGenerate
+            ? (isReady ? 'Generar reporte Word' : 'Puedes generar el reporte y revisar los faltantes antes de exportar.')
+            : 'Carga al menos una imagen para habilitar esta acción';
+    }
+}
+
+function getCardStatusClass(status) {
+    if (status === 'verde') return 'card-verde';
+    if (status === 'amarillo') return 'card-amarillo';
+    if (status === 'rojo') return 'card-rojo';
+    return '';
+}
+
+function updateSelectStyle(select) {
+    if (!select) return;
+    select.classList.remove('status-verde', 'status-amarillo', 'status-rojo');
+    if (select.value === 'verde') select.classList.add('status-verde');
+    if (select.value === 'amarillo') select.classList.add('status-amarillo');
+    if (select.value === 'rojo') select.classList.add('status-rojo');
+}
+
+function validateImageFile(file) {
+    if (!file) {
+        return 'No se pudo leer el archivo seleccionado.';
+    }
+
+    if (!CLIENT_ALLOWED_IMAGE_TYPES.has(file.type)) {
+        return `La imagen "${file.name}" no tiene un formato permitido. Usa JPG, PNG, WEBP, GIF o AVIF.`;
+    }
+
+    if (Number(file.size || 0) > CLIENT_MAX_IMAGE_BYTES) {
+        return `La imagen "${file.name}" supera el máximo permitido de 8 MB.`;
+    }
+
+    return '';
+}
 
 async function handleImageUpload(event) {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
-    loadingText.style.display = 'block';
-    progressFill.style.width = '0%';
-    // Procesar todas las imágenes primero y luego actualizar el grid una sola vez
-    let startIndex = imagesData.length;
-    let newImages = [];
+    const skippedFiles = [];
+    uploadLoaderShownAt = 0;
+    if (currentSessionName) {
+        pushUndoState(files.length > 1 ? 'Agregar imágenes' : 'Agregar imagen');
+    }
+    showUploadLoader(0, files.length, 'Subiendo fotos');
+
     for (let i = 0; i < files.length; i++) {
         try {
-            const imageData = await new Promise((resolve, reject) => {
+            const validationError = validateImageFile(files[i]);
+            if (validationError) {
+                skippedFiles.push(validationError);
+                showToast(validationError, 'error');
+                showUploadLoader(i + 1, files.length, 'Subiendo fotos');
+                continue;
+            }
+
+            const resizedDataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    resizeImage(e.target.result, 1024, (resizedDataUrl) => {
-                        resolve({
-                            src: resizedDataUrl,
-                            index: imagesData.length + newImages.length + 1,
-                            description: '',
-                            status: ''
-                        });
-                    });
+                    resizeImage(e.target.result, 1024, resolve);
                 };
                 reader.onerror = () => reject(new Error('Error leyendo la imagen.'));
                 reader.readAsDataURL(files[i]);
             });
-            newImages.push(imageData);
-        } catch (err) {
-            // Si una imagen falla, continuar con las demás
-            console.error('Error procesando imagen:', err);
-        }
-        progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
-    }
-    // Agregar todas las nuevas imágenes de golpe
-    imagesData.push(...newImages);
-    renderGrid();
-    loadingText.style.display = 'none';
-    generateBtn.disabled = imagesData.length === 0;
-}
 
-function processImage(file, index) {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            // Redimensionar la imagen antes de guardarla (máx 1024px)
-            resizeImage(e.target.result, 1024, (resizedDataUrl) => {
-                imageCount++;
-                const imageData = {
-                    src: resizedDataUrl,
-                    index: imagesData.length + 1, // index secuencial
+            if (currentSessionName) {
+                imagesData.push({
+                    _id: '',
+                    _draftId: `draft-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
                     description: '',
-                    status: ''
-                };
-                imagesData.push(imageData);
-                renderGrid();
-                resolve();
-            });
-        };
-        reader.readAsDataURL(file);
-    });
+                    status: '',
+                    createdAt: new Date().toISOString(),
+                    storagePath: '',
+                    mimeType: files[i].type || 'image/jpeg',
+                    src: resizedDataUrl,
+                    imageData: resizedDataUrl,
+                    _scope: 'session-draft',
+                    _localDraft: true
+                });
+                markSessionDirty(true);
+            } else {
+                const res = await apiFetch('/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imageData: resizedDataUrl, description: '', status: '' })
+                });
+
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(errorText || 'No se pudo subir la imagen');
+                }
+
+                const img = await res.json();
+                img.src = getImageDisplaySource(img, resizedDataUrl);
+                img.imageData = '';
+                img._scope = 'library';
+                imagesData.push(img);
+                markSessionDirty(true);
+            }
+        } catch (err) {
+            console.error('Error procesando imagen:', err);
+            skippedFiles.push(`No se pudo cargar "${files[i]?.name || 'la imagen'}".`);
+            showToast(`No se pudo cargar "${files[i]?.name || 'la imagen'}".`, 'error');
+        }
+        showUploadLoader(i + 1, files.length, 'Subiendo fotos');
+    }
+
+    imageCount = imagesData.length;
+    renderGrid();
+    await hideUploadLoader();
+    if (!currentSessionName) {
+        fetchStorageUsage();
+    }
+    if (skippedFiles.length > 0) {
+        showToast(`${skippedFiles.length} archivo${skippedFiles.length === 1 ? '' : 's'} se omitieron durante la carga.`, 'info');
+    }
+    generateBtn.disabled = imagesData.length === 0;
+    if (event && event.target) {
+        event.target.value = '';
+    }
 }
 
 // Redimensiona la imagen a un máximo de maxSize px (ancho o alto)
@@ -272,21 +1603,46 @@ function resizeImage(dataUrl, maxSize, callback) {
 
 function renderGrid() {
     grid.innerHTML = '';
+    grid.classList.remove('is-empty-state');
+    if (!currentSessionName && imagesData.length === 0) {
+        grid.classList.add('is-empty-state');
+        grid.innerHTML = `
+            <div class="empty-hand-state">
+                <div class="empty-hand-animation" aria-hidden="true">
+                    <div class="finger"></div>
+                    <div class="finger"></div>
+                    <div class="finger"></div>
+                    <div class="finger"></div>
+                    <div class="palm"></div>
+                    <div class="thumb"></div>
+                </div>
+                <div class="empty-hand-title">Esperando a que subas fotos o selecciones una sesión</div>
+                <div class="empty-hand-copy">Cuando cargues imágenes aquí o abras una sesión, empezamos a trabajar en el informe.</div>
+            </div>
+        `;
+        updateImageCounter();
+        if (typeof window.updateScrollBtns === 'function') {
+            setTimeout(() => window.updateScrollBtns(), 0);
+        }
+        return;
+    }
     imagesData.forEach((imageData, idx) => {
         imageData.index = imageStartNumber + idx;
         createImageBox(imageData, idx);
     });
     updateImageCounter(); // <-- Siempre actualiza el contador tras renderizar
-    saveSession(); // <-- Guarda la sesión tras cualquier cambio visual
     // --- NUEVO: Si está en modo selección rápida, re-aplicar handlers ---
     if (window.quickStateMode) {
         applyQuickStateHandlers();
+    }
+    if (typeof window.updateScrollBtns === 'function') {
+        setTimeout(() => window.updateScrollBtns(), 0);
     }
 }
 
 function createImageBox(imageData, idx) {
     const div = document.createElement('div');
-    div.className = 'image-box';
+    div.className = `image-box image-enter ${getCardStatusClass(imageData.status)}`.trim();
     div.setAttribute('draggable', 'true');
     div.setAttribute('data-index', idx);
     div.addEventListener('dragstart', function(e) {
@@ -303,13 +1659,17 @@ function createImageBox(imageData, idx) {
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0 && !isInternalDrag) {
             const file = e.dataTransfer.files[0];
             if (file.type && file.type.startsWith('image/')) {
+                const validationError = validateImageFile(file);
+                if (validationError) {
+                    showToast(validationError, 'error');
+                    return;
+                }
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     resizeImage(ev.target.result, 1024, (resizedDataUrl) => {
                         imagesData[idx].src = resizedDataUrl;
                         renderGrid();
                         updateImageCounter();
-                        saveSession();
                     });
                 };
                 reader.readAsDataURL(file);
@@ -322,13 +1682,47 @@ function createImageBox(imageData, idx) {
     div.addEventListener('dragend', function(e) {
         isInternalDrag = false;        handleDragEnd.call(this, e);
     });
+    const shouldShowImageLoader = !!imageData.src && !loadedImagePreviewSources.has(imageData.src);
     div.innerHTML = `
     <button class="remove-image-btn" title="Eliminar imagen" onclick="removeImage(${idx}, event)">×</button>
-    <div class="image-container" style="position:relative;">
-        <img src="${imageData.src}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger" data-idx="${idx}" />
+    <div class="image-container ${shouldShowImageLoader ? 'image-container-loading' : ''}" style="position:relative;">
+        <div class="image-loading-state ${shouldShowImageLoader ? '' : 'is-hidden'}" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" height="200" width="200" viewBox="0 0 200 200" class="image-pencil-loader">
+                <defs>
+                    <clipPath id="pencil-eraser-${idx}">
+                        <rect height="30" width="30" ry="5" rx="5"></rect>
+                    </clipPath>
+                </defs>
+                <circle transform="rotate(-113,100,100)" stroke-linecap="round" stroke-dashoffset="439.82" stroke-dasharray="439.82 439.82" stroke-width="2" stroke="#111111" fill="none" r="70" class="image-pencil-loader__stroke"></circle>
+                <g transform="translate(100,100)" class="image-pencil-loader__rotate">
+                    <g fill="none">
+                        <circle transform="rotate(-90)" stroke-dashoffset="402" stroke-dasharray="402.12 402.12" stroke-width="30" stroke="hsl(223,90%,50%)" r="64" class="image-pencil-loader__body1"></circle>
+                        <circle transform="rotate(-90)" stroke-dashoffset="465" stroke-dasharray="464.96 464.96" stroke-width="10" stroke="hsl(223,90%,60%)" r="74" class="image-pencil-loader__body2"></circle>
+                        <circle transform="rotate(-90)" stroke-dashoffset="339" stroke-dasharray="339.29 339.29" stroke-width="10" stroke="hsl(223,90%,40%)" r="54" class="image-pencil-loader__body3"></circle>
+                    </g>
+                    <g transform="rotate(-90) translate(49,0)" class="image-pencil-loader__eraser">
+                        <g class="image-pencil-loader__eraser-skew">
+                            <rect height="30" width="30" ry="5" rx="5" fill="hsl(223,90%,70%)"></rect>
+                            <rect clip-path="url(#pencil-eraser-${idx})" height="30" width="5" fill="hsl(223,90%,60%)"></rect>
+                            <rect height="20" width="30" fill="hsl(223,10%,90%)"></rect>
+                            <rect height="20" width="15" fill="hsl(223,10%,70%)"></rect>
+                            <rect height="20" width="5" fill="hsl(223,10%,80%)"></rect>
+                            <rect height="2" width="30" y="6" fill="hsla(223,10%,10%,0.2)"></rect>
+                            <rect height="2" width="30" y="13" fill="hsla(223,10%,10%,0.2)"></rect>
+                        </g>
+                    </g>
+                    <g transform="rotate(-90) translate(49,-30)" class="image-pencil-loader__point">
+                        <polygon points="15 0,30 30,0 30" fill="hsl(33,90%,70%)"></polygon>
+                        <polygon points="15 0,6 30,0 30" fill="hsl(33,90%,50%)"></polygon>
+                        <polygon points="15 0,20 10,10 10" fill="hsl(223,10%,10%)"></polygon>
+                    </g>
+                </g>
+            </svg>
+        </div>
+        <img src="${imageData.src}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger ${shouldShowImageLoader ? 'is-loading' : ''}" data-idx="${idx}" />
     </div>
     <div class="image-label-desc-row">
-        <div class="image-label">Imagen ${imageData.index}:</div>
+        <div class="image-label">Foto ${imageData.index}</div>
         <textarea class="description" placeholder="Descripción de la inspección..." 
                   onchange="updateImageData(${idx}, 'description', this.value)">${imageData.description || ''}</textarea>
     </div>
@@ -341,10 +1735,41 @@ function createImageBox(imageData, idx) {
     <div class="drop-indicator"></div>
     `;
     // Solo abrir cropper si se hace click en la imagen, no en textarea ni select
-    div.querySelector('.img-cropper-trigger').onclick = function(e) {
+    const previewImg = div.querySelector('.img-cropper-trigger');
+    const imageContainer = div.querySelector('.image-container');
+    const imageLoader = div.querySelector('.image-loading-state');
+    const imageLoaderStartedAt = Date.now();
+    const finishPreviewLoad = () => {
+        const elapsed = Date.now() - imageLoaderStartedAt;
+        const remaining = Math.max(0, 5000 - elapsed);
+        const revealImage = () => {
+            if (imageData.src) {
+                loadedImagePreviewSources.add(imageData.src);
+            }
+            previewImg.classList.remove('is-loading');
+            imageContainer.classList.remove('image-container-loading');
+            if (imageLoader) imageLoader.classList.add('is-hidden');
+        };
+
+        if (remaining > 0) {
+            setTimeout(revealImage, remaining);
+        } else {
+            revealImage();
+        }
+    };
+    previewImg.onclick = function(e) {
         if (!window.quickStateMode) showImageCropper(idx);
         e.stopPropagation();
     };
+    if (!shouldShowImageLoader) {
+        finishPreviewLoad();
+    } else if (previewImg.complete && previewImg.naturalWidth > 0) {
+        requestAnimationFrame(finishPreviewLoad);
+    } else {
+        previewImg.addEventListener('load', finishPreviewLoad, { once: true });
+        previewImg.addEventListener('error', finishPreviewLoad, { once: true });
+    }
+    updateSelectStyle(div.querySelector('.status-select'));
     grid.appendChild(div);
 }
 
@@ -364,29 +1789,6 @@ window.showImageCropper = function(idx) {
         cropperModal.style.display = 'flex';
     }
 };
-
-// --- Guardar sesión y estado en el backend al cerrar ---
-window.addEventListener('beforeunload', async () => {
-    // Guardar estado de imágenes (descripción y estado) al cerrar o recargar
-    for (let img of imagesData) {
-        if (img._id) {
-            await fetch(`${API_BASE_URL}/image/${img._id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ description: img.description, status: img.status })
-            });
-        }
-    }
-});
-
-window.removeImage = function(idx, event) {
-    event.stopPropagation();
-    imagesData.splice(idx, 1);
-    renderGrid();
-    if (imagesData.length === 0) {
-        generateBtn.disabled = true;
-    }
-}
 
 let dragSrcIdx = null;
 let autoScrollInterval = null;
@@ -492,18 +1894,34 @@ async function generateWord(forceExport) {
         try {
             await loadDocxLibrary();
         } catch (error) {
-            alert('Error: No se puede cargar la librería docx. Verifica tu conexión a internet y recarga la página.');
+            await showDecisionDialog({
+                title: 'No se pudo cargar la librería',
+                message: 'Verifica tu conexión a internet y recarga la página para generar el reporte.',
+                confirmText: 'Entendido',
+                tone: 'danger',
+                showCancel: false,
+                icon: '!'
+            });
             return;
         }
     }
 
     if (imagesData.length === 0) {
-        alert('Por favor, carga al menos una imagen antes de generar el reporte.');
+        await showDecisionDialog({
+            title: 'No hay imágenes cargadas',
+            message: 'Carga al menos una imagen antes de generar el reporte.',
+            confirmText: 'Entendido',
+            tone: 'warning',
+            showCancel: false,
+            icon: '!'
+        });
         return;
     }
 
     generateBtn.disabled = true;
     generateBtn.textContent = '⏳ Generando...';
+    showExportLoader('Generando reporte Word', 'Estamos armando el documento con tus imágenes...');
+    const minExportLoaderDelay = new Promise((resolve) => setTimeout(resolve, 3500));
 
     try {
         const finalDocx = window.docx || window.Docx || docxLib;
@@ -644,7 +2062,7 @@ async function generateWord(forceExport) {
                         // --- CELDA DE IMAGEN ---
                         let imageCell;
                         try {
-                            const imageBuffer = base64ToArrayBuffer(imageData.src);
+                            const imageBuffer = await imageSourceToArrayBuffer(imageData.src);
                             imageCell = new TableCell({
                                 children: [
                                     new Paragraph({
@@ -783,6 +2201,8 @@ async function generateWord(forceExport) {
         });
 
         const blob = await Packer.toBlob(doc);
+        await minExportLoaderDelay;
+
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -792,16 +2212,27 @@ async function generateWord(forceExport) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        showSuccessAlert('¡Reporte generado exitosamente con formato 3x3!');
+        showSuccessAlert('Reporte generado correctamente');
 
     } catch (error) {
         console.error('Error al generar el documento:', error);
-        alert('Error al generar el documento: ' + error.message);
+        await minExportLoaderDelay;
+        await showDecisionDialog({
+            title: 'Error al generar el reporte',
+            message: `Error al generar el documento: ${error.message}`,
+            confirmText: 'Cerrar',
+            tone: 'danger',
+            showCancel: false,
+            icon: '!'
+        });
     } finally {
+        hideExportLoader();
         generateBtn.disabled = false;
         generateBtn.textContent = '📄 Generar Reporte Word';
     }
 }
+
+window.generateWord = generateWord;
 
 // Alerta moderna de éxito
 function showSuccessAlert(message) {
@@ -809,23 +2240,14 @@ function showSuccessAlert(message) {
     if (old) old.remove();
     const modal = document.createElement('div');
     modal.id = 'successAlertModal';
-    modal.style.position = 'fixed';
-    modal.style.top = '0';
-    modal.style.left = '0';
-    modal.style.width = '100vw';
-    modal.style.height = '100vh';
-    modal.style.background = 'rgba(39, 174, 96, 0.12)';
-    modal.style.zIndex = '100001';
-    modal.style.display = 'flex';
-    modal.style.alignItems = 'center';
-    modal.style.justifyContent = 'center';
+    modal.className = 'report-success-modal';
     modal.innerHTML = `
-      <div style="background:linear-gradient(135deg,#27ae60 60%,#2ecc71 100%);max-width:400px;width:90vw;padding:32px 24px 24px 24px;border-radius:18px;box-shadow:0 8px 32px #0003;display:flex;flex-direction:column;align-items:center;position:relative;animation:fadeInScale 0.4s;">
-        <div style="font-size:2.5rem;color:#fff;margin-bottom:10px;">✅</div>
-        <div style="font-size:1.18rem;color:#fff;text-align:center;margin-bottom:18px;font-weight:bold;">${message}</div>
-        <button id="successAlertBtn" class="generate-btn" style="background:#fff;color:#27ae60;min-width:120px;font-weight:bold;font-size:1rem;box-shadow:0 2px 8px #27ae6033;">Cerrar</button>
+      <div class="report-success-card">
+        <div class="report-success-icon">✓</div>
+        <div class="report-success-title">${message}</div>
+        <div class="report-success-subtitle">Tu reporte Word ya quedó listo para revisarse.</div>
+        <button id="successAlertBtn" class="report-success-btn">Cerrar</button>
       </div>
-      <style>@keyframes fadeInScale{0%{opacity:0;transform:scale(0.8);}100%{opacity:1;transform:scale(1);}}</style>
     `;
     document.body.appendChild(modal);
     document.getElementById('successAlertBtn').onclick = () => {
@@ -869,27 +2291,17 @@ function showFancyAlert(message, onContinue) {
     if (old) old.remove();
     const modal = document.createElement('div');
     modal.id = 'fancyAlertModal';
-    modal.style.position = 'fixed';
-    modal.style.top = '0';
-    modal.style.left = '0';
-    modal.style.width = '100vw';
-    modal.style.height = '100vh';
-    modal.style.background = 'rgba(44,62,80,0.18)';
-    modal.style.zIndex = '100002';
-    modal.style.display = 'flex';
-    modal.style.alignItems = 'center';
-    modal.style.justifyContent = 'center';
+    modal.className = 'report-warning-modal';
     modal.innerHTML = `
-      <div style="background:#fff;max-width:420px;width:92vw;padding:36px 28px 28px 28px;border-radius:20px;box-shadow:0 8px 32px #0002;display:flex;flex-direction:column;align-items:center;position:relative;animation:fadeInScale 0.4s;">
-        <div style="font-size:2.5rem;color:#e67e22;margin-bottom:12px;">📝</div>
-        <div style="font-size:1.18rem;color:#222;text-align:center;margin-bottom:18px;font-weight:bold;">Faltan datos en algunas imágenes</div>
-        <div style="font-size:1rem;color:#444;text-align:center;margin-bottom:18px;">${message}</div>
-        <div style="display:flex;gap:14px;justify-content:center;width:100%;margin-top:8px;">
-          <button id="fancyAlertBtnContinue" class="generate-btn" style="background:#27ae60;min-width:120px;">Continuar</button>
-          <button id="fancyAlertBtn" class="generate-btn" style="background:#e74c3c;min-width:120px;">Editar</button>
+      <div class="report-warning-card">
+        <div class="report-warning-icon">📝</div>
+        <div class="report-warning-title">Faltan datos en algunas imágenes</div>
+        <div class="report-warning-body">${message}</div>
+        <div class="report-warning-actions">
+          <button id="fancyAlertBtnContinue" class="report-warning-btn report-warning-btn-continue">Continuar</button>
+          <button id="fancyAlertBtn" class="report-warning-btn report-warning-btn-edit">Editar</button>
         </div>
       </div>
-      <style>@keyframes fadeInScale{0%{opacity:0;transform:scale(0.8);}100%{opacity:1;transform:scale(1);}}</style>
     `;
     document.body.appendChild(modal);
     document.getElementById('fancyAlertBtn').onclick = () => {
@@ -919,6 +2331,23 @@ function base64ToArrayBuffer(base64) {
         bytes[i] = binaryString.charCodeAt(i);
     }
     return bytes.buffer;
+}
+
+async function imageSourceToArrayBuffer(src) {
+    if (typeof src !== 'string' || !src) {
+        throw new Error('La imagen no tiene una fuente válida.');
+    }
+
+    if (src.startsWith('data:image/')) {
+        return base64ToArrayBuffer(src);
+    }
+
+    const response = await fetch(src);
+    if (!response.ok) {
+        throw new Error(`No se pudo descargar la imagen (${response.status}).`);
+    }
+
+    return await response.arrayBuffer();
 }
 
 // --- Cropper globales ---
@@ -1230,19 +2659,11 @@ style.innerHTML = `
 `;
 document.head.appendChild(style);
 
-// --- Guardar sesión and contador al renderizar y eliminar imágenes ---
+// --- Mantener contador sincronizado sin auto-guardar al renderizar ---
 const originalRenderGrid = renderGrid;
 renderGrid = function() {
     originalRenderGrid.apply(this, arguments);
     updateImageCounter();
-    saveSession();
-};
-
-const originalRemoveImage = window.removeImage;
-window.removeImage = function(idx, event) {
-    originalRemoveImage(idx, event);
-    updateImageCounter();
-    saveSession();
 };
 
 // --- Drag & Drop global para cargar imagen en cualquier parte de la pantalla ---
@@ -1316,75 +2737,339 @@ document.addEventListener('drop', function(e) {
 // --- UI y lógica para manejo de sesiones ---
 async function saveSessionToDB() {
     const name = document.getElementById('sessionNameInput').value.trim();
-    if (!name) return alert('Escribe un nombre para la sesión');
+    if (!name) {
+        showToast('Escribe un nombre para la sesión.', 'error');
+        return;
+    }
+    const wasLibraryWorkspace = !currentSessionName;
+    const libraryImageIdsToCleanup = wasLibraryWorkspace
+        ? imagesData
+            .filter((img) => img && img._scope === 'library' && img._id)
+            .map((img) => img._id)
+        : [];
     syncDescriptionsFromDOM();
-    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
-        imageData: imageData || src,
-        description,
-        status,
-        createdAt: createdAt || new Date()
-    }));
-    await fetch(`${API_BASE_URL}/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, images })
-    });
-    await loadSessionList();
-    alert('Sesión guardada');
+    const images = imagesData.map(buildSessionImagePayload);
+    showSaveLoader('Guardando sesión...', `Estamos guardando la sesión "${name}".`);
+    try {
+        const res = await apiFetch('/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, images })
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            showToast(`No se pudo guardar la sesión. ${errorText}`, 'error');
+            return;
+        }
+
+        const savedSession = await res.json();
+        if (libraryImageIdsToCleanup.length > 0) {
+            await Promise.allSettled(
+                libraryImageIdsToCleanup.map((id) =>
+                    apiFetch(`/image/${id}`, { method: 'DELETE' })
+                )
+            );
+        }
+        if (savedSession && Array.isArray(savedSession.images)) {
+            imagesData = savedSession.images.map(img => ({
+                ...img,
+                imageData: '',
+                src: getImageDisplaySource(img),
+                _scope: 'session'
+            }));
+            imageCount = imagesData.length;
+            renderGrid();
+            updateImageCounter();
+        }
+
+        setCurrentSession(name);
+        markSessionDirty(false);
+        await loadSessionList(name);
+        fetchStorageUsage();
+        showToast('Sesión guardada correctamente.', 'success');
+    } finally {
+        await hideSaveLoader();
+    }
 }
 
-async function loadSessionList() {
-    const res = await fetch(`${API_BASE_URL}/sessions`);
+async function loadSessionList(selectedName = '') {
+    const res = await apiFetch('/sessions');
+    if (!res.ok) {
+        showToast('No se pudo cargar la lista de sesiones.', 'error');
+        return;
+    }
     const sessions = await res.json();
+    sessionSummaries = Array.isArray(sessions) ? sessions : [];
+    const missingPhotoCount = sessionSummaries.some((session) => !Number.isFinite(Number(session.photoCount)));
+
+    if (missingPhotoCount && sessionSummaries.length > 0) {
+        sessionSummaries = await Promise.all(sessionSummaries.map(async (session) => {
+            try {
+                const detailRes = await apiFetch(`/session/${encodeURIComponent(session.name)}?includeImageData=false`);
+                if (!detailRes.ok) {
+                    return { ...session, photoCount: Number(session.photoCount || 0) };
+                }
+                const detail = await detailRes.json();
+                const photoCount = Array.isArray(detail.images) ? detail.images.length : 0;
+                return { ...session, photoCount };
+            } catch (error) {
+                return { ...session, photoCount: Number(session.photoCount || 0) };
+            }
+        }));
+    }
+
     const select = document.getElementById('sessionList');
     select.innerHTML = '';
-    // Siempre agrega la opción por defecto al inicio
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = '';
-    defaultOpt.textContent = 'Seleccionar sesión';
-    defaultOpt.selected = true;
-    defaultOpt.disabled = true;
-    select.appendChild(defaultOpt);
-    sessions.forEach(s => {
+    // Agrega el espacio de trabajo sin sesión al inicio.
+    const noSessionOpt = document.createElement('option');
+    noSessionOpt.value = '';
+    noSessionOpt.textContent = 'Sin sesión';
+    select.appendChild(noSessionOpt);
+    sessionSummaries.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s.name;
         opt.textContent = `${s.name} (${new Date(s.createdAt).toLocaleString()})`;
         select.appendChild(opt);
     });
-    // Si no hay sesión seleccionada, deja la opción por defecto
-    select.value = '';
+
+    const targetName = selectedName || currentSessionName;
+    if (targetName && sessionSummaries.some(s => s.name === targetName)) {
+        select.value = targetName;
+    } else {
+        select.value = '';
+    }
+
+    renderStorageSessionsDropdown();
+    updateSessionActionLayout();
 }
 
-async function loadSessionFromDB() {
+async function loadSessionFromDB(options = {}) {
     const select = document.getElementById('sessionList');
-    const name = select.value;
-    if (!name) return alert('Selecciona una sesión');
-    const res = await fetch(`${API_BASE_URL}/session/${name}`);
-    if (!res.ok) return alert('No se pudo cargar la sesión');
-    const session = await res.json();
-    imagesData = session.images.map(img => ({ ...img, src: img.imageData }));
-    imageCount = imagesData.length;
-    imageStartNumber = 1;
-    renderGrid();
-    updateImageCounter();
-    alert('Sesión cargada');
+    const name = (options.sessionName || (select ? select.value : '') || '').trim();
+    if (shouldConfirmSessionSwitch(name)) {
+        const decision = await showDecisionDialog({
+            title: 'Cambios sin guardar',
+            message: 'No has guardado los cambios de esta sesión. ¿Seguro que quieres cambiar?',
+            confirmText: 'Cambiar sin guardar',
+            cancelText: 'Seguir editando',
+            tertiaryText: 'Guardar y cambiar',
+            tone: 'warning',
+            icon: '!'
+        });
+        if (decision === 'tertiary') {
+            try {
+                await persistCurrentSessionChanges({ name: currentSessionName, silent: false, source: 'manual' });
+            } catch (error) {
+                if (select) {
+                    select.value = currentSessionName || '';
+                }
+                updateSessionActionLayout();
+                return;
+            }
+        } else if (!decision) {
+            if (select) {
+                select.value = currentSessionName || '';
+            }
+            updateSessionActionLayout();
+            return;
+        }
+        await discardUnsavedSessionDrafts();
+        markSessionDirty(false);
+    }
+
+    if (!name) {
+        if (currentSessionName) {
+            await switchToLibraryWorkspace();
+        } else {
+            setCurrentSession('');
+            updateSessionActionLayout();
+        }
+        return;
+    }
+    showAppLoader(options.loaderMessage || 'Cargando sesión...');
+    try {
+        const res = await apiFetch(`/session/${encodeURIComponent(name)}?includeImageData=false`);
+        if (!res.ok) {
+            if (!options.silent) {
+                showToast('No se pudo cargar la sesión.', 'error');
+            }
+            return;
+        }
+
+        const session = await res.json();
+        const restoredDraft = options.forceServer ? false : restoreSessionDraftIntoState(name);
+        if (!restoredDraft) {
+            imagesData = session.images.map(img => ({ ...img, imageData: '', src: getImageDisplaySource(img), _scope: 'session' }));
+            imageCount = imagesData.length;
+            imageStartNumber = 1;
+        }
+        setCurrentSession(name);
+        if (!restoredDraft) {
+            markSessionDirty(false);
+        } else {
+            updateCurrentSessionBanner();
+        }
+        renderGrid();
+        updateImageCounter();
+        if (!options.silent) {
+            showToast(options.forceServer ? 'Se recuperó el último guardado de la sesión.' : (restoredDraft ? 'Sesión recuperada con cambios pendientes.' : 'Sesión cargada.'), 'info');
+        }
+    } finally {
+        hideAppLoader();
+    }
+}
+
+async function reloadLastSavedSessionState() {
+    if (!currentSessionName) {
+        showToast('Abre una sesión para recuperar su último guardado.', 'info');
+        return;
+    }
+
+    const shouldReplace = hasUnsavedSessionChanges
+        ? await showDecisionDialog({
+            title: 'Recuperar último guardado',
+            message: `Se perderán los cambios locales no guardados de la sesión "${currentSessionName}". ¿Quieres cargar el último guardado real?`,
+            confirmText: 'Cargar último guardado',
+            cancelText: 'Cancelar',
+            tone: 'warning',
+            icon: '↺'
+        })
+        : true;
+
+    if (!shouldReplace) return;
+
+    undoStack = [];
+    clearSessionDraftCache(currentSessionName);
+    hasUnsavedSessionChanges = false;
+    nextSessionAutosaveAt = 0;
+    await loadSessionFromDB({
+        sessionName: currentSessionName,
+        forceServer: true,
+        silent: false,
+        loaderMessage: 'Recuperando último guardado...'
+    });
 }
 
 async function deleteSessionFromDB() {
     const select = document.getElementById('sessionList');
     const name = select.value;
-    if (!name) return alert('Selecciona una sesión');
-    if (!confirm('¿Seguro que quieres borrar esta sesión?')) return;
-    await fetch(`${API_BASE_URL}/session/${name}`, { method: 'DELETE' });
-    await loadSessionList();
-    alert('Sesión borrada');
+    if (!name) {
+        showToast('Selecciona una sesión.', 'error');
+        return;
+    }
+    const confirmed = await showDecisionDialog({
+        title: 'Borrar sesión',
+        message: `Se eliminará la sesión "${name}" y sus imágenes guardadas. Esta acción no se puede deshacer.`,
+        confirmText: 'Borrar',
+        cancelText: 'Cancelar',
+        tone: 'danger',
+        icon: '×'
+    });
+    if (!confirmed) return;
+    showDeleteLoader('Eliminando sesión...', `Estamos borrando la sesión "${name}".`);
+    try {
+        const res = await apiFetch(`/session/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        if (!res.ok) {
+            showToast('No se pudo borrar la sesión.', 'error');
+            return;
+        }
+        const deletedCurrentSession = currentSessionName === name;
+        if (currentSessionName === name) {
+            setCurrentSession('');
+        }
+        clearSessionDraftCache(name);
+        markSessionDirty(false);
+        await loadSessionList('');
+        if (deletedCurrentSession) {
+            await switchToLibraryWorkspace();
+        } else {
+            renderGrid();
+            updateImageCounter();
+        }
+        fetchStorageUsage();
+        showToast('Sesión borrada.', 'info');
+    } finally {
+        await hideDeleteLoader();
+    }
 }
 
 async function clearAllSessions() {
-    if (!confirm('¿Seguro que quieres borrar TODAS las sesiones?')) return;
-    await fetch(`${API_BASE_URL}/sessions`, { method: 'DELETE' });
-    await loadSessionList();
-    alert('Todas las sesiones han sido borradas');
+    const confirmed = await showDecisionDialog({
+        title: 'Eliminar base de datos',
+        message: 'Se borrarán todas las sesiones guardadas. Esta acción no se puede deshacer.',
+        confirmText: 'Eliminar todo',
+        cancelText: 'Cancelar',
+        tone: 'danger',
+        icon: '×'
+    });
+    if (!confirmed) return;
+    showDeleteLoader('Eliminando base de datos...', 'Estamos borrando todas las sesiones guardadas.');
+    try {
+        const res = await apiFetch('/sessions', { method: 'DELETE' });
+        if (!res.ok) {
+            showToast('No se pudieron borrar las sesiones.', 'error');
+            return;
+        }
+        setCurrentSession('');
+        try {
+            Object.keys(localStorage)
+                .filter((key) => key.startsWith(SESSION_DRAFT_STORAGE_PREFIX))
+                .forEach((key) => localStorage.removeItem(key));
+        } catch (error) {
+            // Ignorar errores del caché local.
+        }
+        markSessionDirty(false);
+        await loadSessionList();
+        fetchStorageUsage();
+        showToast('Todas las sesiones fueron borradas.', 'info');
+    } finally {
+        await hideDeleteLoader();
+    }
+}
+
+async function clearAllUploadedImages() {
+        const deletingSessionImages = Boolean(currentSessionName);
+    const confirmed = await showDecisionDialog({
+        title: deletingSessionImages ? 'Eliminar imágenes de esta sesión' : 'Eliminar imágenes de Sin sesión',
+        message: deletingSessionImages
+            ? `Se borrarán todas las fotos guardadas dentro de la sesión "${currentSessionName}". La sesión seguirá existiendo, pero quedará vacía.`
+            : 'Se borrarán todas las fotos del espacio Sin sesión. Esta acción no se puede deshacer.',
+        confirmText: 'Eliminar imágenes',
+        cancelText: 'Cancelar',
+        tone: 'danger',
+        icon: '×'
+    });
+    if (!confirmed) return;
+    showDeleteLoader(
+        deletingSessionImages ? 'Eliminando imágenes...' : 'Limpiando imágenes...',
+        deletingSessionImages
+            ? `Estamos eliminando las imágenes de la sesión "${currentSessionName}".`
+            : 'Estamos limpiando las imágenes cargadas en este espacio.'
+    );
+    try {
+        const res = await apiFetch(
+            deletingSessionImages
+                ? `/session/${encodeURIComponent(currentSessionName)}/images`
+                : '/images',
+            { method: 'DELETE' }
+        );
+        if (!res.ok) {
+            showToast('No se pudieron borrar las imágenes.', 'error');
+            return;
+        }
+
+        if (currentSessionName) {
+            await loadSessionFromDB({ sessionName: currentSessionName, silent: true, loaderMessage: 'Limpiando imágenes...' });
+        } else {
+            await loadSession();
+        }
+        updateImageCounter();
+        fetchStorageUsage();
+        showToast(deletingSessionImages ? 'Las imágenes de esta sesión fueron eliminadas.' : 'Las imágenes de Sin sesión fueron eliminadas.', 'info');
+    } finally {
+        await hideDeleteLoader();
+    }
 }
 
 function removeOldSessionControls() {
@@ -1394,11 +3079,16 @@ function removeOldSessionControls() {
 
 function addSessionControls() {
     removeOldSessionControls();
-    document.getElementById('saveSessionBtn').onclick = saveSessionToDB;
+    document.getElementById('saveChangesBtn').onclick = handlePrimarySessionSave;
     document.getElementById('loadSessionBtn').onclick = loadSessionFromDB;
     document.getElementById('deleteSessionBtn').onclick = deleteSessionFromDB;
     document.getElementById('btn-clear-db').onclick = clearAllSessions;
-    loadSessionList();
+    const sessionSelect = document.getElementById('sessionList');
+    if (sessionSelect) {
+        sessionSelect.addEventListener('change', () => {
+            updateSessionActionLayout();
+        });
+    }
 }
 
 // Evento para el botón de selección rápida
@@ -1410,27 +3100,45 @@ if (quickBtn) {
 }
 
 // --- Limpiar imágenes (botón Limpiar) ---
-const clearBtn = document.getElementById('clearBtn');
-if (clearBtn) {
-    clearBtn.onclick = async function() {
-        for (let img of imagesData) {
-            if (img._id) {
-                await fetch(`${API_BASE_URL}/image/${img._id}`, { method: 'DELETE' });
-            }
-        }
-        imagesData = [];
-        imageStartNumber = 1;
-        await loadSession();
-        renderGrid();
-        updateImageCounter();
-        generateBtn.disabled = true;
-        if (progressFill) progressFill.style.width = '0%';
-        if (loadingText) loadingText.style.display = 'none';
-    };
-}
+    const clearBtn = document.getElementById('clearBtn');
+  if (clearBtn) {
+    clearBtn.onclick = clearAllUploadedImages;
+  }
+
+  const reloadSavedBtn = document.getElementById('reloadSavedBtn');
+  if (reloadSavedBtn) {
+    reloadSavedBtn.onclick = reloadLastSavedSessionState;
+  }
 
 // --- Lógica para selección rápida de estado ---
 window.quickStateMode = false;
+window.quickStateSelected = null;
+
+function getQuickStateVisual(state) {
+    switch (state) {
+        case 'verde':
+            return { label: 'Buen estado', tone: 'success', icon: '●' };
+        case 'amarillo':
+            return { label: 'Observación', tone: 'warning', icon: '●' };
+        case 'rojo':
+            return { label: 'No conforme', tone: 'danger', icon: '●' };
+        default:
+            return { label: 'Limpiar estado', tone: 'clear', icon: '○' };
+    }
+}
+
+function setQuickStateSelection(state) {
+    window.quickStateSelected = state;
+    document.querySelectorAll('.quick-state-chip').forEach((chip) => {
+        chip.classList.toggle('is-selected', chip.dataset.state === state);
+    });
+}
+
+async function applyQuickStateToImage(idx, state) {
+    if (!imagesData[idx]) return;
+    await window.updateImageData(idx, 'status', state);
+    renderGrid();
+}
 
 // --- Modern Quick State Banner ---
 function showQuickStateBanner() {
@@ -1440,125 +3148,51 @@ function showQuickStateBanner() {
     let oldOverlay = document.getElementById('quickStateOverlay');
     if (oldOverlay) oldOverlay.remove();
 
-    // Overlay: permite interacción con imágenes (pointer-events: none fuera del banner)
     const overlay = document.createElement('div');
     overlay.id = 'quickStateOverlay';
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.background = 'rgba(44,62,80,0.18)';
-    overlay.style.zIndex = '10010';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'flex-start';
-    overlay.style.justifyContent = 'center';
+    overlay.className = 'quick-state-overlay';
     document.body.appendChild(overlay);
 
-    // Banner: contiene los botones de selección rápida
     const banner = document.createElement('div');
     banner.id = 'quickStateBanner';
-    banner.style.position = 'relative';
-    banner.style.marginTop = '60px';
-    banner.style.background = '#fff'; // Fondo blanco sólido
-    banner.style.color = '#222';
-    banner.style.fontWeight = 'bold';
-    banner.style.fontSize = '1.18rem';
-    banner.style.padding = '28px 38px 22px 38px';
-    banner.style.borderRadius = '22px';
-    banner.style.boxShadow = '0 8px 32px #0002';
-    banner.style.zIndex = '10011';
-    banner.style.display = 'flex';
-    banner.style.flexDirection = 'column';
-    banner.style.alignItems = 'center';
-    banner.style.animation = 'slideDownQuickState 0.35s cubic-bezier(.7,1.6,.5,1)';
-    banner.style.pointerEvents = 'auto'; // El banner sí recibe eventos
+    banner.className = 'quick-state-banner';
     banner.innerHTML = `
-      <button id="quickStateCloseBtn" style="position:absolute;top:14px;right:18px;background:none;border:none;font-size:1.7rem;color:#888;cursor:pointer;z-index:2;transition:color 0.2s;" title="Salir">×</button>
-      <div style="font-size:1.15rem;font-weight:bold;margin-bottom:18px;letter-spacing:0.5px;display:flex;align-items:center;gap:10px;">
-        <span style="color:#2980b9;font-size:1.5rem;">⚡</span> Selección rápida de estado
+      <button id="quickStateCloseBtn" class="quick-state-close" title="Salir">×</button>
+      <div class="quick-state-banner-title">
+        <span class="quick-state-banner-bolt">⚡</span>
+        <span>Estado rápido</span>
       </div>
-      <div style="display:flex;gap:22px;margin-bottom:18px;">
-        <button class="quick-state-btn" id="quickStateVerde" title="Buen estado" style="background:#27ae60;"><span>🟢</span></button>
-        <button class="quick-state-btn" id="quickStateAmarillo" title="Observación" style="background:#f1c40f;color:#222;"><span>🟡</span></button>
-        <button class="quick-state-btn" id="quickStateRojo" title="No conformidad" style="background:#e74c3c;"><span>🔴</span></button>
-        <button class="quick-state-btn" id="quickStateClear" title="Limpiar estado" style="background:#bdc3c7;color:#222;"><span>❌</span></button>
+      <div class="quick-state-chip-row">
+        <button class="quick-state-chip quick-state-chip-success" id="quickStateVerde" data-state="verde" title="Buen estado"><span class="quick-state-chip-dot">●</span><span>Buen estado</span></button>
+        <button class="quick-state-chip quick-state-chip-warning" id="quickStateAmarillo" data-state="amarillo" title="Observación"><span class="quick-state-chip-dot">●</span><span>Observación</span></button>
+        <button class="quick-state-chip quick-state-chip-danger" id="quickStateRojo" data-state="rojo" title="No conformidad"><span class="quick-state-chip-dot">●</span><span>No conforme</span></button>
+        <button class="quick-state-chip quick-state-chip-clear" id="quickStateClear" data-state="" title="Limpiar estado"><span class="quick-state-chip-dot">○</span><span>Limpiar</span></button>
       </div>
-      <div style="display:flex;gap:18px;align-items:center;">
-        <button id="quickStateSelectAll" class="generate-btn" style="background:#2980b9;color:#fff;font-size:1.05rem;padding:8px 22px;border-radius:12px;">Seleccionar todo</button>
+      <div class="quick-state-banner-actions">
+        <button id="quickStateSelectAll" class="quick-state-apply-all" type="button">Aplicar a todas</button>
       </div>
     `;
-    // El banner debe estar por encima y sí recibir eventos
     banner.onclick = function(e) { e.stopPropagation(); };
     overlay.appendChild(banner);
 
-    // Inyectar CSS solo una vez
-    if (!document.getElementById('quickStateBannerCSS')) {
-        const css = document.createElement('style');
-        css.id = 'quickStateBannerCSS';
-        css.innerHTML = `
-        @keyframes slideDownQuickState {0%{opacity:0;transform:translateY(-40px);}100%{opacity:1;transform:translateY(0);}}
-        .quick-state-btn {
-          width: 64px; height: 64px; border-radius: 50%; border: none; font-size: 2.1rem;
-          display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px #0001;
-          cursor: pointer; transition: box-shadow 0.2s, transform 0.2s, outline 0.2s;
-          outline: 3px solid transparent; font-weight: bold;
+    setQuickStateSelection(null);
+    document.getElementById('quickStateVerde').onclick = () => setQuickStateSelection('verde');
+    document.getElementById('quickStateAmarillo').onclick = () => setQuickStateSelection('amarillo');
+    document.getElementById('quickStateRojo').onclick = () => setQuickStateSelection('rojo');
+    document.getElementById('quickStateClear').onclick = () => setQuickStateSelection('');
+    document.getElementById('quickStateSelectAll').onclick = async function() {
+        if (window.quickStateSelected === null || imagesData.length === 0) return;
+        if (currentSessionName) {
+            pushUndoState('Estado rápido en todas');
         }
-        .quick-state-btn.selected, .quick-state-btn:focus {
-          outline: 3px solid #222;
-          box-shadow: 0 4px 18px #0002;
-          transform: scale(1.08);
-        }
-        .quick-state-btn:hover {
-          box-shadow: 0 6px 24px #0002;
-          transform: scale(1.10);
-        }
-        #quickStateCloseBtn:hover { color: #e74c3c; }
-        `;
-        document.head.appendChild(css);
-    }
+        await Promise.all(imagesData.map((_, index) => applyQuickStateToImage(index, window.quickStateSelected)));
+        showToast('Estado aplicado a todas las fotos.', 'success');
+    };
 
-    // Estado seleccionado para aplicar con "Seleccionar todo" o clic en imágenes
-    window.quickStateSelected = null;
-    function highlightBtn(state) {
-        ['Verde','Amarillo','Rojo','Clear'].forEach(s => {
-            let btn = document.getElementById('quickState'+s);
-            if (btn) btn.classList.toggle('selected', state === s.toLowerCase());
-        });
-    }
-    document.getElementById('quickStateVerde').onclick = function(e) {
-        window.quickStateSelected = 'verde';
-        highlightBtn('verde');
-    };
-    document.getElementById('quickStateAmarillo').onclick = function(e) {
-        window.quickStateSelected = 'amarillo';
-        highlightBtn('amarillo');
-    };
-    document.getElementById('quickStateRojo').onclick = function(e) {
-        window.quickStateSelected = 'rojo';
-        highlightBtn('rojo');
-    };
-    document.getElementById('quickStateClear').onclick = function(e) {
-        window.quickStateSelected = '';
-        highlightBtn('clear');
-    };
-    document.getElementById('quickStateSelectAll').onclick = function(e) {
-        if (window.quickStateSelected === null) return;
-        imagesData.forEach(img => img.status = window.quickStateSelected);
-        updateImageCounter();
-        saveSession();
-        renderGrid();
-    };
-    // Solo la X cierra el banner
     document.getElementById('quickStateCloseBtn').onclick = function(e) {
         e.stopPropagation();
-        exitQuickStateMode(e);
+        exitQuickStateMode();
     };
-
-    // Permitir cerrar haciendo click fuera del banner
-    overlay.addEventListener('mousedown', function(e) {
-        if (e.target === overlay) exitQuickStateMode(e);
-    });
 }
 
 // Ocultar banner y overlay
@@ -1572,16 +3206,18 @@ function hideQuickStateBanner() {
 function enterQuickStateMode() {
     window.quickStateMode = true;
     document.body.classList.add('quick-state-mode');
+    setQuickStateSelection(null);
     applyQuickStateHandlers();
     setTimeout(showQuickStateBanner, 10);
 }
 
 function exitQuickStateMode(e) {
-    if (e && e.target && e.target.closest && e.target.closest('#quickStateBanner')) return;
     window.quickStateMode = false;
     document.body.classList.remove('quick-state-mode');
+    window.quickStateSelected = null;
     document.querySelectorAll('.image-box').forEach((box, idx) => {
         box.classList.remove('quick-select');
+        box.classList.remove('quick-state-ready');
         const img = box.querySelector('.img-cropper-trigger');
         if (img) img.onclick = function(e) { showImageCropper(idx); e.stopPropagation(); };
     });
@@ -1592,41 +3228,44 @@ function exitQuickStateMode(e) {
 function applyQuickStateHandlers() {
     document.querySelectorAll('.image-box').forEach((box, idx) => {
         box.classList.add('quick-select');
-        // Eliminar cualquier handler previo
-        box.onclick = null;
+        box.classList.toggle('quick-state-ready', window.quickStateSelected !== null);
+        box.onclick = async function(e) {
+            if (!window.quickStateMode) return;
+            if (e.target.closest('.remove-image-btn') || e.target.closest('.description') || e.target.closest('.status-select')) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.quickStateSelected === null) {
+                showToast('Elige primero un estado rápido.', 'info');
+                return;
+            }
+            if (currentSessionName) {
+                pushUndoState('Estado rápido');
+            }
+            await applyQuickStateToImage(idx, window.quickStateSelected);
+            showToast(`Estado aplicado a Foto ${imagesData[idx]?.index || idx + 1}.`, 'success');
+        };
         const img = box.querySelector('.img-cropper-trigger');
         if (img) {
-            img.onclick = function(e) {
+            img.onclick = async function(e) {
                 e.stopPropagation();
-                if (window.quickStateSelected === null) return;
-                // Actualizar estado en datos
-                imagesData[idx].status = window.quickStateSelected;
-                // Actualizar borde visualmente
-                if (window.quickStateSelected === 'verde') {
-                    box.style.border = '3px solid #27ae60';
-                } else if (window.quickStateSelected === 'amarillo') {
-                    box.style.border = '3px solid #f1c40f';
-                } else if (window.quickStateSelected === 'rojo') {
-                    box.style.border = '3px solid #e74c3c';
-                } else {
-                    box.style.border = '2px solid #ecf0f1';
+                if (!window.quickStateMode) {
+                    showImageCropper(idx);
+                    return;
                 }
-                updateImageCounter();
-                saveSession();
+                if (window.quickStateSelected === null) {
+                    showToast('Elige primero un estado rápido.', 'info');
+                    return;
+                }
+                if (currentSessionName) {
+                    pushUndoState('Estado rápido');
+                }
+                await applyQuickStateToImage(idx, window.quickStateSelected);
+                showToast(`Estado aplicado a Foto ${imagesData[idx]?.index || idx + 1}.`, 'success');
             };
         }
-        // Visual feedback inicial
-        if (imagesData[idx].status === 'verde') {
-            box.style.border = '3px solid #27ae60';
-        } else if (imagesData[idx].status === 'amarillo') {
-            box.style.border = '3px solid #f1c40f';
-        } else if (imagesData[idx].status === 'rojo') {
-            box.style.border = '3px solid #e74c3c';
-        } else {
-            box.style.border = '2px solid #ecf0f1';
-        }
     });
-    // No cerrar modo rápido al hacer click fuera
     document.body.onclick = null;
 }
 
@@ -1636,8 +3275,8 @@ function setupSessionDropdownMenu() {
     var dd = document.getElementById('optionsDropdown');
     if (!btn || !dd) return;
     // Asignar acciones correctas a los ítems del menú
-    var borrarSesion = dd.querySelector('.dropdown-item.btn-delete:nth-child(1)');
-    var borrarDB = dd.querySelector('.dropdown-item.btn-delete:nth-child(2)');
+    var borrarSesion = document.getElementById('menuDeleteSession');
+    var borrarDB = document.getElementById('menuClearDB');
     if (borrarSesion) borrarSesion.onclick = function(e) {
         e.stopPropagation();
         deleteSessionFromDB();
@@ -1667,43 +3306,93 @@ function setupSessionDropdownMenu() {
     dd.onclick = function(e) { e.stopPropagation(); };
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    loadSession();
-    updateImageCounter();
-    addSessionControls();
-    setupSessionDropdownMenu();
-});
-
 // --- Fin de script ---
 window.saveChangesToCurrentSession = async function() {
     const select = document.getElementById('sessionList');
-    const name = select && select.value ? select.value.trim() : null;
+    const selectedName = select && select.value ? select.value.trim() : '';
+    const typedNameInput = document.getElementById('sessionNameInput');
+    const typedName = typedNameInput && typedNameInput.value ? typedNameInput.value.trim() : '';
+    const targetName = currentSessionName && selectedName && selectedName !== currentSessionName
+        ? selectedName
+        : (currentSessionName || selectedName);
     // Si hay imágenes nuevas y una sesión seleccionada, advertir antes de guardar
-    if (name && imagesData.length > 0 && input && input.files && input.files.length > 0) {
-        if (!confirm('Tienes imágenes nuevas cargadas y una sesión seleccionada. ¿Seguro que quieres guardar los cambios en esta sesión?')) {
+    if (targetName && imagesData.length > 0 && input && input.files && input.files.length > 0) {
+        const confirmed = await showDecisionDialog({
+            title: 'Guardar cambios en la sesión',
+            message: 'Tienes imágenes nuevas cargadas. ¿Seguro que quieres guardarlas dentro de esta sesión?',
+            confirmText: 'Guardar cambios',
+            cancelText: 'Cancelar',
+            tone: 'primary',
+            icon: '↻'
+        });
+        if (!confirmed) {
             return;
         }
     }
-    if (!name) {
-        alert('Selecciona una sesión para guardar los cambios.');
+    if (!targetName && typedName) {
+        await saveSessionToDB();
         return;
     }
-    syncDescriptionsFromDOM && syncDescriptionsFromDOM();
-    const images = imagesData.map(({ imageData, src, description, status, createdAt }) => ({
-        imageData: imageData || src,
-        description,
-        status,
-        createdAt: createdAt || new Date()
-    }));
-    try {
-        await fetch(`${API_BASE_URL}/session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, images })
+
+    if (!targetName) {
+        await showDecisionDialog({
+            title: 'No hay sesión seleccionada',
+            message: 'Selecciona una sesión antes de guardar cambios.',
+            confirmText: 'Entendido',
+            tone: 'warning',
+            showCancel: false,
+            icon: '!'
         });
-        alert('¡Cambios guardados en la sesión "' + name + '"!');
-        await loadSessionList && loadSessionList();
+        return;
+    }
+
+    if (currentSessionName && targetName !== currentSessionName) {
+        let targetImagesCount = 0;
+        try {
+            const targetRes = await apiFetch(`/session/${encodeURIComponent(targetName)}?includeImageData=false`);
+            if (targetRes.ok) {
+                const targetSession = await targetRes.json();
+                targetImagesCount = Array.isArray(targetSession.images) ? targetSession.images.length : 0;
+            }
+        } catch (error) {
+            console.warn('No se pudo verificar la sesión seleccionada antes de guardar:', error);
+        }
+
+        if (targetImagesCount > 0) {
+            const confirmReplace = await showDecisionDialog({
+                title: 'Guardar en la sesión seleccionada',
+                message: `La sesión "${targetName}" ya tiene ${targetImagesCount} foto${targetImagesCount === 1 ? '' : 's'} o contenido guardado. ¿Deseas reemplazarla con lo que tienes abierto ahora?`,
+                confirmText: 'Guardar y reemplazar',
+                cancelText: 'Cancelar',
+                tone: 'warning',
+                icon: '↻'
+            });
+            if (!confirmReplace) {
+                return;
+            }
+        }
+    }
+
+    try {
+        await persistCurrentSessionChanges({ name: targetName, silent: false, source: 'manual' });
     } catch (e) {
-        alert('Error al guardar los cambios en la sesión.');
+        console.error('Error guardando cambios de sesión:', e);
+        showToast(`Error al guardar los cambios en la sesión. ${e.message || ''}`, 'error');
     }
 };
+
+document.addEventListener('keydown', function(event) {
+    if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'z') {
+        return;
+    }
+
+    const target = event.target;
+    const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+    const isTypingTarget = tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable);
+    if (isTypingTarget) {
+        return;
+    }
+
+    event.preventDefault();
+    undoLastAction();
+});
