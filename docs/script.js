@@ -1716,12 +1716,189 @@ function getCardStatusClass(status) {
     return '';
 }
 
+const STATUS_SELECT_META = {
+    '': {
+        label: 'Sin estado',
+        hint: 'Aún no se ha definido',
+        toneClass: ''
+    },
+    verde: {
+        label: 'Buen estado',
+        hint: 'Lista y conforme',
+        toneClass: 'is-verde'
+    },
+    amarillo: {
+        label: 'Observaciones de mejora',
+        hint: 'Tiene ajustes por revisar',
+        toneClass: 'is-amarillo'
+    },
+    rojo: {
+        label: 'No conformidad. Requiere intervención',
+        hint: 'Necesita atención inmediata',
+        toneClass: 'is-rojo'
+    }
+};
+
+function closeAllStatusSelectMenus(exceptWrapper = null) {
+    document.querySelectorAll('.status-select-ui.is-open').forEach((wrapper) => {
+        if (exceptWrapper && wrapper === exceptWrapper) return;
+        wrapper.classList.remove('is-open');
+        wrapper.classList.remove('opens-up');
+        const trigger = wrapper.querySelector('.status-select-trigger');
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function positionStatusSelectMenu(wrapper) {
+    if (!wrapper) return;
+    const menu = wrapper.querySelector('.status-select-menu');
+    if (!menu) return;
+
+    wrapper.classList.remove('opens-up');
+
+    const menuRect = menu.getBoundingClientRect();
+    const triggerRect = wrapper.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const spaceBelow = viewportHeight - triggerRect.bottom;
+    const needsOpenUp = spaceBelow < (menuRect.height + 18);
+
+    if (needsOpenUp) {
+        wrapper.classList.add('opens-up');
+    }
+}
+
+function ensureStatusSelectGlobalHandlers() {
+    if (window.__statusSelectGlobalHandlersBound) return;
+    window.__statusSelectGlobalHandlersBound = true;
+
+    document.addEventListener('click', (event) => {
+        if (event.target.closest('.status-select-ui')) return;
+        closeAllStatusSelectMenus();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeAllStatusSelectMenus();
+        }
+    });
+}
+
+function buildCustomStatusSelect(select) {
+    if (!select || select.dataset.customized === 'true') return;
+    ensureStatusSelectGlobalHandlers();
+    select.dataset.customized = 'true';
+    select.classList.add('status-select-native');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'status-select-ui';
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'status-select-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+
+    const valueWrap = document.createElement('span');
+    valueWrap.className = 'status-select-trigger-copy';
+    const title = document.createElement('span');
+    title.className = 'status-select-trigger-title';
+    const hint = document.createElement('span');
+    hint.className = 'status-select-trigger-hint';
+    valueWrap.append(title, hint);
+
+    const caret = document.createElement('span');
+    caret.className = 'status-select-trigger-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    caret.innerHTML = '&#9662;';
+
+    trigger.append(valueWrap, caret);
+
+    const menu = document.createElement('div');
+    menu.className = 'status-select-menu';
+    menu.setAttribute('role', 'listbox');
+
+    Array.from(select.options).forEach((option) => {
+        const meta = STATUS_SELECT_META[option.value] || STATUS_SELECT_META[''];
+        const optionBtn = document.createElement('button');
+        optionBtn.type = 'button';
+        optionBtn.className = 'status-select-option';
+        optionBtn.dataset.value = option.value;
+        optionBtn.setAttribute('role', 'option');
+
+        const dot = document.createElement('span');
+        dot.className = `status-select-option-dot ${meta.toneClass}`;
+        dot.setAttribute('aria-hidden', 'true');
+
+        const copy = document.createElement('span');
+        copy.className = 'status-select-option-copy';
+        const optionTitle = document.createElement('span');
+        optionTitle.className = 'status-select-option-title';
+        optionTitle.textContent = meta.label;
+        const optionHint = document.createElement('span');
+        optionHint.className = 'status-select-option-hint';
+        optionHint.textContent = meta.hint;
+        copy.append(optionTitle, optionHint);
+
+        optionBtn.append(dot, copy);
+        optionBtn.addEventListener('click', () => {
+            select.value = option.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            closeAllStatusSelectMenus();
+            trigger.focus();
+        });
+        menu.appendChild(optionBtn);
+    });
+
+    trigger.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const isOpen = wrapper.classList.contains('is-open');
+        closeAllStatusSelectMenus(wrapper);
+        wrapper.classList.toggle('is-open', !isOpen);
+        trigger.setAttribute('aria-expanded', String(!isOpen));
+        if (!isOpen) {
+            requestAnimationFrame(() => positionStatusSelectMenu(wrapper));
+        }
+    });
+
+    trigger.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            trigger.click();
+        }
+    });
+
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.append(select, trigger, menu);
+    updateSelectStyle(select);
+}
+
 function updateSelectStyle(select) {
     if (!select) return;
     select.classList.remove('status-verde', 'status-amarillo', 'status-rojo');
     if (select.value === 'verde') select.classList.add('status-verde');
     if (select.value === 'amarillo') select.classList.add('status-amarillo');
     if (select.value === 'rojo') select.classList.add('status-rojo');
+
+    const wrapper = select.closest('.status-select-ui');
+    if (!wrapper) return;
+
+    wrapper.classList.remove('status-verde', 'status-amarillo', 'status-rojo');
+    if (select.value === 'verde') wrapper.classList.add('status-verde');
+    if (select.value === 'amarillo') wrapper.classList.add('status-amarillo');
+    if (select.value === 'rojo') wrapper.classList.add('status-rojo');
+
+    const meta = STATUS_SELECT_META[select.value] || STATUS_SELECT_META[''];
+    const title = wrapper.querySelector('.status-select-trigger-title');
+    const hint = wrapper.querySelector('.status-select-trigger-hint');
+    if (title) title.textContent = meta.label;
+    if (hint) hint.textContent = meta.hint;
+
+    wrapper.querySelectorAll('.status-select-option').forEach((optionBtn) => {
+        const isSelected = optionBtn.dataset.value === select.value;
+        optionBtn.classList.toggle('is-selected', isSelected);
+        optionBtn.setAttribute('aria-selected', String(isSelected));
+    });
 }
 
 function validateImageFile(file) {
@@ -2024,6 +2201,7 @@ function createImageBox(imageData, idx) {
             previewImg.src = imageData.imageData;
         }
     });
+    buildCustomStatusSelect(div.querySelector('.status-select'));
     updateSelectStyle(div.querySelector('.status-select'));
     grid.appendChild(div);
 }
@@ -3527,7 +3705,7 @@ function applyQuickStateHandlers() {
         box.classList.toggle('quick-state-ready', window.quickStateSelected !== null);
         box.onclick = async function(e) {
             if (!window.quickStateMode) return;
-            if (e.target.closest('.remove-image-btn') || e.target.closest('.description') || e.target.closest('.status-select')) {
+            if (e.target.closest('.remove-image-btn') || e.target.closest('.description') || e.target.closest('.status-select') || e.target.closest('.status-select-ui')) {
                 return;
             }
             e.preventDefault();
