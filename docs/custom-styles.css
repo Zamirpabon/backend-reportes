@@ -4650,3 +4650,50 @@ body.quick-state-mode .image-box.quick-state-ready {
     padding: 18px 12px !important;
   }
 }
+
+/* Cierre final del bloque de acciones para evitar desbordes laterales */
+.upload-section {
+  width: min(calc(100% - 12px), 100%) !important;
+  max-width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-sizing: border-box !important;
+  overflow-x: clip !important;
+}
+
+.upload-section-inner {
+  width: min(calc(100% - 12px), 1120px) !important;
+  max-width: 1120px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-sizing: border-box !important;
+}
+
+.upload-section-inner > * {
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+
+@media (max-width: 900px) {
+  .upload-section {
+    width: min(calc(100% - 10px), 100%) !important;
+  }
+
+  .upload-section-inner {
+    width: calc(100% - 8px) !important;
+    max-width: calc(100% - 8px) !important;
+    gap: 10px !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .upload-section {
+    width: calc(100% - 8px) !important;
+  }
+
+  .upload-section-inner {
+    width: calc(100% - 4px) !important;
+    max-width: calc(100% - 4px) !important;
+    gap: 10px !important;
+  }
+}
