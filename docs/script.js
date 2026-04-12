@@ -60,6 +60,16 @@ let sessionSummaries = [];
 let latestStorageUsage = null;
 const loadedImagePreviewSources = new Set();
 const MAX_UNDO_STATES = 25;
+const MAX_BACKGROUND_LOOSE_UPLOADS = 3;
+const pendingLooseUploadQueue = [];
+const canceledLooseUploadDraftIds = new Set();
+const pendingImageDeletions = new Map();
+let activeLooseUploadCount = 0;
+let looseUploadDrainResolvers = [];
+let looseUploadTotalCount = 0;
+let looseUploadCompletedCount = 0;
+let uploadLoaderDisplayCount = 0;
+let uploadLoaderDisplayTimer = null;
 
 // Agregar input para número inicial de imagen
 let imageStartNumber = 1;
@@ -219,7 +229,12 @@ function showUploadLoader(current = 0, total = 0, message = 'Subiendo fotos') {
         uploadLoaderTitle.textContent = message;
     }
     if (uploadLoaderCount) {
-        uploadLoaderCount.textContent = `${current}/${total}`;
+        looseUploadTotalCount = Number(total || 0);
+        if (Number(current || 0) === 0) {
+            uploadLoaderDisplayCount = 0;
+        }
+        uploadLoaderCount.textContent = `${uploadLoaderDisplayCount}/${looseUploadTotalCount}`;
+        animateUploadLoaderCount(current, looseUploadTotalCount);
     }
 }
 
@@ -378,10 +393,254 @@ async function updateDeviceQuotaEstimate() {
 }
 
 function getImageDisplaySource(image, fallback = '') {
-    if (image?.signedUrl) return image.signedUrl;
     if (typeof image?.src === 'string' && image.src) return image.src;
     if (typeof image?.imageData === 'string' && image.imageData) return image.imageData;
+    if (image?.signedUrl) return image.signedUrl;
     return fallback;
+}
+
+function hasPendingLooseUploads() {
+    return activeLooseUploadCount > 0
+        || pendingLooseUploadQueue.length > 0
+        || imagesData.some((img) => img && img._pendingUpload);
+}
+
+function notifyLooseUploadDrainIfNeeded() {
+    if (hasPendingLooseUploads()) return;
+    const resolvers = [...looseUploadDrainResolvers];
+    looseUploadDrainResolvers = [];
+    resolvers.forEach((resolve) => resolve());
+}
+
+function waitForLooseUploadsToFinish() {
+    if (!hasPendingLooseUploads()) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        looseUploadDrainResolvers.push(resolve);
+    });
+}
+
+function cancelScheduledImageDelete(imageId) {
+    if (!imageId) return;
+    const deleteTimer = pendingImageDeletions.get(imageId);
+    if (deleteTimer) {
+        clearTimeout(deleteTimer);
+        pendingImageDeletions.delete(imageId);
+    }
+}
+
+function scheduleImageDelete(imageId, delay = 1200) {
+    if (!imageId) return;
+    cancelScheduledImageDelete(imageId);
+    const timer = setTimeout(async () => {
+        pendingImageDeletions.delete(imageId);
+        try {
+            const res = await apiFetch(`/image/${imageId}`, { method: 'DELETE' });
+            if (!res.ok) {
+                console.warn('No se pudo eliminar la imagen programada:', imageId);
+            }
+        } catch (error) {
+            console.warn('Error eliminando imagen programada:', error);
+        }
+    }, delay);
+    pendingImageDeletions.set(imageId, timer);
+}
+
+function createLoosePlaceholderImage(file, index) {
+    const localObjectUrl = URL.createObjectURL(file);
+    return {
+        _id: '',
+        _draftId: `loose-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        description: '',
+        status: '',
+        createdAt: new Date().toISOString(),
+        storagePath: '',
+        mimeType: file.type || 'image/jpeg',
+        signedUrl: '',
+        src: localObjectUrl,
+        imageData: '',
+        _scope: 'library-pending',
+        _pendingUpload: true,
+        _localObjectUrl: localObjectUrl
+    };
+}
+
+function readAndResizeImageFile(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            resizeImage(e.target.result, 1024, resolve);
+        };
+        reader.onerror = () => reject(new Error('Error leyendo la imagen.'));
+        reader.readAsDataURL(file);
+    });
+}
+
+function preloadImageSource(src) {
+    if (!src) return Promise.resolve(false);
+    return new Promise((resolve) => {
+        const img = new window.Image();
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        img.src = src;
+    });
+}
+
+function queueLooseImageUpload(placeholder, file) {
+    pendingLooseUploadQueue.push({
+        draftId: placeholder._draftId,
+        file
+    });
+    processLooseUploadQueue();
+}
+
+async function syncLooseImageMetadataIfNeeded(image) {
+    if (!image || !image._id) return;
+
+    const res = await apiFetch(`/image/${image._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            description: image.description || '',
+            status: image.status || ''
+        })
+    });
+
+    if (!res.ok) {
+        console.warn('No se pudo sincronizar la metadata de la imagen cargada en segundo plano.');
+    }
+}
+
+async function finalizeLooseUploadTask(task) {
+    const { draftId, file } = task;
+    const currentIndex = imagesData.findIndex((img) => img && img._draftId === draftId);
+    let localFallbackDataUrl = '';
+
+    if (currentIndex === -1 || canceledLooseUploadDraftIds.has(draftId)) {
+        canceledLooseUploadDraftIds.delete(draftId);
+        return;
+    }
+
+    try {
+        const resizedDataUrl = await readAndResizeImageFile(file);
+        localFallbackDataUrl = resizedDataUrl;
+        const latestIndex = imagesData.findIndex((img) => img && img._draftId === draftId);
+
+        if (latestIndex === -1 || canceledLooseUploadDraftIds.has(draftId)) {
+            canceledLooseUploadDraftIds.delete(draftId);
+            return;
+        }
+
+        const latestImage = imagesData[latestIndex];
+        const initialDescription = latestImage.description || '';
+        const initialStatus = latestImage.status || '';
+
+        const res = await apiFetch('/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                imageData: resizedDataUrl,
+                description: initialDescription,
+                status: initialStatus
+            })
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(errorText || 'No se pudo subir la imagen');
+        }
+
+        const uploadedImage = await res.json();
+        const uploadedIndex = imagesData.findIndex((img) => img && img._draftId === draftId);
+
+        if (uploadedIndex === -1 || canceledLooseUploadDraftIds.has(draftId)) {
+            canceledLooseUploadDraftIds.delete(draftId);
+            if (uploadedImage && uploadedImage._id) {
+                await apiFetch(`/image/${uploadedImage._id}`, { method: 'DELETE' });
+            }
+            return;
+        }
+
+        const liveImage = imagesData[uploadedIndex];
+        const remoteSource = getImageDisplaySource(uploadedImage, '');
+        let finalSource = liveImage.src;
+
+        if (remoteSource) {
+            const remoteReady = await preloadImageSource(remoteSource);
+            if (remoteReady) {
+                finalSource = remoteSource;
+                loadedImagePreviewSources.add(remoteSource);
+                if (liveImage._localObjectUrl) {
+                    URL.revokeObjectURL(liveImage._localObjectUrl);
+                }
+            }
+        }
+
+        const mergedImage = {
+            ...liveImage,
+            ...uploadedImage,
+            src: finalSource,
+            imageData: '',
+            _scope: 'library',
+            _pendingUpload: false,
+            _localObjectUrl: finalSource === remoteSource ? '' : (liveImage._localObjectUrl || '')
+        };
+
+        imagesData[uploadedIndex] = mergedImage;
+        imageCount = imagesData.length;
+        looseUploadCompletedCount = Math.min(looseUploadTotalCount, looseUploadCompletedCount + 1);
+        showUploadLoader(looseUploadCompletedCount, looseUploadTotalCount, 'Subiendo fotos');
+        renderGrid();
+        updateImageCounter();
+
+        if ((mergedImage.description || '') !== initialDescription || (mergedImage.status || '') !== initialStatus) {
+            await syncLooseImageMetadataIfNeeded(mergedImage);
+        }
+    } catch (error) {
+        console.error('Error subiendo imagen en segundo plano:', error);
+        const failedIndex = imagesData.findIndex((img) => img && img._draftId === draftId);
+        if (failedIndex !== -1) {
+            imagesData[failedIndex]._pendingUpload = false;
+            imagesData[failedIndex]._uploadError = true;
+            if (localFallbackDataUrl) {
+                imagesData[failedIndex].src = localFallbackDataUrl;
+                imagesData[failedIndex].imageData = localFallbackDataUrl;
+                if (imagesData[failedIndex]._localObjectUrl) {
+                    URL.revokeObjectURL(imagesData[failedIndex]._localObjectUrl);
+                    imagesData[failedIndex]._localObjectUrl = '';
+                }
+            }
+        }
+        looseUploadCompletedCount = Math.min(looseUploadTotalCount, looseUploadCompletedCount + 1);
+        showUploadLoader(looseUploadCompletedCount, looseUploadTotalCount, 'Subiendo fotos');
+        showToast(`No se pudo subir "${file?.name || 'la imagen'}" a la base de datos.`, 'error');
+        renderGrid();
+        updateImageCounter();
+    } finally {
+        canceledLooseUploadDraftIds.delete(draftId);
+        if (!hasPendingLooseUploads()) {
+            markSessionDirty(false);
+            fetchStorageUsage();
+        } else {
+            updateCurrentSessionBanner();
+        }
+    }
+}
+
+function processLooseUploadQueue() {
+    while (activeLooseUploadCount < MAX_BACKGROUND_LOOSE_UPLOADS && pendingLooseUploadQueue.length > 0) {
+        const nextTask = pendingLooseUploadQueue.shift();
+        activeLooseUploadCount += 1;
+
+        finalizeLooseUploadTask(nextTask)
+            .finally(() => {
+                activeLooseUploadCount = Math.max(0, activeLooseUploadCount - 1);
+                notifyLooseUploadDrainIfNeeded();
+                processLooseUploadQueue();
+            });
+    }
 }
 
 function buildSessionImagePayload(image) {
@@ -446,6 +705,11 @@ function restoreUndoSnapshot(snapshot) {
     imagesData = Array.isArray(snapshot.imagesData)
         ? snapshot.imagesData.map(cloneImageForUndo)
         : [];
+    imagesData.forEach((img) => {
+        if (img && img._id) {
+            cancelScheduledImageDelete(img._id);
+        }
+    });
     imageCount = imagesData.length;
     imageStartNumber = Number(snapshot.imageStartNumber || 1);
     setCurrentSession(snapshot.currentSessionName || '');
@@ -517,16 +781,52 @@ async function fetchStorageUsage() {
     }
 }
 
+function clearUploadLoaderAnimation() {
+    if (uploadLoaderDisplayTimer) {
+        clearInterval(uploadLoaderDisplayTimer);
+        uploadLoaderDisplayTimer = null;
+    }
+}
+
+function animateUploadLoaderCount(current, total) {
+    if (!uploadLoaderCount) return;
+    clearUploadLoaderAnimation();
+    const startCount = uploadLoaderDisplayCount;
+    const endCount = Math.max(0, Math.min(total, Number(current || 0)));
+    if (startCount >= endCount) {
+        uploadLoaderCount.textContent = `${endCount}/${total}`;
+        uploadLoaderDisplayCount = endCount;
+        return;
+    }
+
+    const delta = endCount - startCount;
+    const steps = Math.min(delta, 6);
+    const stepValue = Math.max(1, Math.ceil(delta / steps));
+    let display = startCount;
+    uploadLoaderDisplayTimer = setInterval(() => {
+        display = Math.min(endCount, display + stepValue);
+        uploadLoaderCount.textContent = `${display}/${total}`;
+        uploadLoaderDisplayCount = display;
+        if (display >= endCount) {
+            clearUploadLoaderAnimation();
+        }
+    }, 75);
+}
+
 async function hideUploadLoader() {
     if (uploadLoader) {
         const elapsed = Date.now() - uploadLoaderShownAt;
-        const remaining = Math.max(0, 5000 - elapsed);
+        const remaining = Math.max(0, 500 - elapsed);
         if (remaining) {
             await new Promise(resolve => setTimeout(resolve, remaining));
         }
         uploadLoader.style.display = 'none';
     }
     uploadLoaderShownAt = 0;
+    looseUploadTotalCount = 0;
+    looseUploadCompletedCount = 0;
+    uploadLoaderDisplayCount = 0;
+    clearUploadLoaderAnimation();
 }
 
 function showSaveLoader(title = 'Guardando cambios...', text = 'Estamos guardando tus fotos y datos de la sesión.') {
@@ -685,149 +985,51 @@ function ensureSessionAutosave() {
 async function initializeApp() {
     if (appInitialized) return;
     appInitialized = true;
-    updateImageCounter();
-    addSessionControls();
-    setupSessionDropdownMenu();
-    ensureLooseImagesCountdown();
-    ensureSessionAutosave();
-    showToast('Conectando con el servidor de fotos...', 'info');
-    await resolveApiBaseUrl();
-    showToast('Servidor conectado correctamente.', 'success');
-    fetchStorageUsage();
-    updateDeviceCacheUsage();
-    await restoreInitialWorkspace();
+    try {
+        updateImageCounter();
+        addSessionControls();
+        setupSessionDropdownMenu();
+        ensureLooseImagesCountdown();
+        ensureSessionAutosave();
+        showToast('Conectando con Supabase...', 'info');
+        await ensureSupabaseReady();
+        showToast('Supabase conectado correctamente.', 'success');
+        fetchStorageUsage();
+        updateDeviceCacheUsage();
+        await restoreInitialWorkspace();
+    } catch (error) {
+        console.error('No se pudo iniciar la app con Supabase directo:', error);
+        showToast(error.message || 'No se pudo conectar con Supabase.', 'error');
+    }
 }
 
 window.addEventListener('DOMContentLoaded', initializeApp);
 
-// --- Configuración de backend ---
-const DEFAULT_REMOTE_API_BASE_URL = 'https://backend-reportes-lzfl.onrender.com';
-const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1'];
-let API_BASE_URL = '';
-let apiResolutionPromise = null;
-
-function getApiCandidates() {
-    const candidates = [];
-    const configuredApi =
-        (typeof window !== 'undefined' && typeof window.REPORTES_API_BASE_URL === 'string'
-            ? window.REPORTES_API_BASE_URL
-            : '') ||
-        localStorage.getItem('backend-reportes.apiBaseUrl') ||
-        '';
-
-    const sameOriginApi = `${window.location.protocol}//${window.location.host}`;
-    const forceLocalApi = localStorage.getItem('backend-reportes.useLocalApi') === 'true';
-    const isLocalHost = LOCAL_HOSTNAMES.includes(window.location.hostname);
-
-    if (configuredApi) candidates.push(configuredApi.trim());
-    if (isLocalHost && window.location.port === '3001') {
-        candidates.push(sameOriginApi);
-        if (forceLocalApi && sameOriginApi !== 'http://localhost:3001') {
-            candidates.push('http://localhost:3001');
-        }
-    } else if (isLocalHost && forceLocalApi) {
-        candidates.push('http://localhost:3001');
-        candidates.push(DEFAULT_REMOTE_API_BASE_URL);
-    } else if (isLocalHost) {
-        candidates.push(DEFAULT_REMOTE_API_BASE_URL);
-    } else {
-        candidates.push(sameOriginApi);
-        if (sameOriginApi !== DEFAULT_REMOTE_API_BASE_URL) {
-            candidates.push(DEFAULT_REMOTE_API_BASE_URL);
-        }
+// --- Puente directo a Supabase ---
+async function ensureSupabaseReady() {
+    if (!window.directSupabaseBridge || typeof window.directSupabaseBridge.ensureReady !== 'function') {
+        throw new Error('No se encontró el puente directo de Supabase.');
     }
-
-    return [...new Set(candidates.filter(Boolean).map((url) => url.replace(/\/+$/, '')))];
-}
-
-async function canReachApi(baseUrl) {
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
-        const response = await fetch(`${baseUrl}/health`, {
-            method: 'GET',
-            cache: 'no-store',
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        return response.ok;
-    } catch (_) {
-        return false;
-    }
-}
-
-async function waitForApi(baseUrl, options = {}) {
-    const {
-        timeoutMs = 45000,
-        retryDelayMs = 2500
-    } = options;
-    const startedAt = Date.now();
-
-    while (Date.now() - startedAt < timeoutMs) {
-        // eslint-disable-next-line no-await-in-loop
-        const reachable = await canReachApi(baseUrl);
-        if (reachable) {
-            return true;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    }
-
-    return false;
+    return window.directSupabaseBridge.ensureReady();
 }
 
 async function resolveApiBaseUrl() {
-    if (API_BASE_URL) {
-        return API_BASE_URL;
+    if (!window.directSupabaseBridge || typeof window.directSupabaseBridge.resolveApiBaseUrl !== 'function') {
+        throw new Error('No se encontró el puente directo de Supabase.');
     }
-
-    if (apiResolutionPromise) {
-        return apiResolutionPromise;
-    }
-
-    apiResolutionPromise = (async () => {
-        const candidates = getApiCandidates();
-
-        for (const candidate of candidates) {
-            const isRemoteCandidate = /^https?:\/\//i.test(candidate) && !candidate.includes('localhost:3001');
-            // eslint-disable-next-line no-await-in-loop
-            const reachable = await waitForApi(candidate, {
-                timeoutMs: isRemoteCandidate ? 45000 : 5000,
-                retryDelayMs: isRemoteCandidate ? 3000 : 1500
-            });
-            if (reachable) {
-                API_BASE_URL = candidate;
-                return API_BASE_URL;
-            }
-        }
-
-        API_BASE_URL = candidates.includes(DEFAULT_REMOTE_API_BASE_URL)
-            ? DEFAULT_REMOTE_API_BASE_URL
-            : (candidates[0] || DEFAULT_REMOTE_API_BASE_URL);
-        return API_BASE_URL;
-    })();
-
-    try {
-        return await apiResolutionPromise;
-    } finally {
-        apiResolutionPromise = null;
-    }
+    return window.directSupabaseBridge.resolveApiBaseUrl();
 }
 
 async function apiFetch(path, options) {
-    let baseUrl = await resolveApiBaseUrl();
-
-    try {
-        return await fetch(`${baseUrl}${path}`, options);
-    } catch (error) {
-        API_BASE_URL = '';
-        baseUrl = await resolveApiBaseUrl();
-        return fetch(`${baseUrl}${path}`, options);
+    if (!window.directSupabaseBridge || typeof window.directSupabaseBridge.apiFetch !== 'function') {
+        throw new Error('No se encontró el puente directo de Supabase.');
     }
+    return window.directSupabaseBridge.apiFetch(path, options);
 }
 
 // --- Reemplazar localStorage por backend ---
 async function saveSession() {
+    await waitForLooseUploadsToFinish();
     syncDescriptionsFromDOM();
     const requests = imagesData
         .filter(img => img._id)
@@ -911,12 +1113,12 @@ async function persistCurrentSessionChanges(options = {}) {
 }
 
 async function loadSession() {
-    const res = await apiFetch('/images?includeImageData=false');
+    const res = await apiFetch('/images?includeImageData=true');
     if (!res.ok) {
         throw new Error('No se pudieron cargar las imágenes');
     }
     const data = await res.json();
-    imagesData = data.map(img => ({ ...img, src: getImageDisplaySource(img), _scope: 'library' }));
+    imagesData = data.map(img => ({ ...img, src: img.imageData || getImageDisplaySource(img), _scope: 'library' }));
     imageCount = imagesData.length;
     imageStartNumber = 1;
     const looseAutosaveAt = readLooseAutosaveDeadline();
@@ -1087,25 +1289,28 @@ async function restoreInitialWorkspace() {
         console.error('Error inicializando imágenes:', error);
         showToast('No se pudieron cargar las imágenes iniciales.', 'error');
     } finally {
-        await hideAppLoader(5000);
+        await hideAppLoader(500);
     }
 }
 
 // --- Eliminar imagen en backend ---
 window.removeImage = async function(idx, event) {
-    event.stopPropagation();
+    if (event && typeof event.stopPropagation === 'function') {
+        event.stopPropagation();
+    }
     const img = imagesData[idx];
     const isSessionWorkspaceImage = img && (img._scope === 'session' || img._scope === 'session-draft');
 
-    if (!isSessionWorkspaceImage && img._id) {
-        const res = await apiFetch(`/image/${img._id}`, { method: 'DELETE' });
-        if (!res.ok) {
-            showToast('No se pudo eliminar la imagen.', 'error');
-            return;
-        }
+    pushUndoState('Eliminar imagen');
+
+    if (!isSessionWorkspaceImage && img && img._id) {
+        scheduleImageDelete(img._id);
     }
-    if (isSessionWorkspaceImage) {
-        pushUndoState('Eliminar imagen');
+    if (!isSessionWorkspaceImage && img && img._draftId && (img._pendingUpload || img._scope === 'library-pending')) {
+        canceledLooseUploadDraftIds.add(img._draftId);
+        if (img._localObjectUrl) {
+            URL.revokeObjectURL(img._localObjectUrl);
+        }
     }
     imagesData.splice(idx, 1);
     imageCount = imagesData.length;
@@ -1118,6 +1323,13 @@ window.removeImage = async function(idx, event) {
     if (isSessionWorkspaceImage && currentSessionName) {
         markSessionDirty(true);
         showToast('Imagen quitada de la sesión abierta. Guarda los cambios para aplicarlo.', 'info');
+    } else if (!currentSessionName) {
+        if (hasPendingLooseUploads()) {
+            markSessionDirty(true);
+        } else {
+            markSessionDirty(false);
+            fetchStorageUsage();
+        }
     }
 };
 
@@ -1130,6 +1342,8 @@ window.updateImageData = async function(idx, field, value) {
     }
     imagesData[idx][field] = value;
     if (currentSessionName) {
+        markSessionDirty(true);
+    } else if (imagesData[idx]._pendingUpload) {
         markSessionDirty(true);
     }
     const card = document.querySelector(`.image-box[data-index="${idx}"]`);
@@ -1494,6 +1708,7 @@ async function handleImageUpload(event) {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
     const skippedFiles = [];
+    const loosePlaceholders = [];
     uploadLoaderShownAt = 0;
     if (currentSessionName) {
         pushUndoState(files.length > 1 ? 'Agregar imágenes' : 'Agregar imagen');
@@ -1510,16 +1725,8 @@ async function handleImageUpload(event) {
                 continue;
             }
 
-            const resizedDataUrl = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    resizeImage(e.target.result, 1024, resolve);
-                };
-                reader.onerror = () => reject(new Error('Error leyendo la imagen.'));
-                reader.readAsDataURL(files[i]);
-            });
-
             if (currentSessionName) {
+                const resizedDataUrl = await readAndResizeImageFile(files[i]);
                 imagesData.push({
                     _id: '',
                     _draftId: `draft-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1535,23 +1742,9 @@ async function handleImageUpload(event) {
                 });
                 markSessionDirty(true);
             } else {
-                const res = await apiFetch('/upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imageData: resizedDataUrl, description: '', status: '' })
-                });
-
-                if (!res.ok) {
-                    const errorText = await res.text();
-                    throw new Error(errorText || 'No se pudo subir la imagen');
-                }
-
-                const img = await res.json();
-                img.src = getImageDisplaySource(img, resizedDataUrl);
-                img.imageData = '';
-                img._scope = 'library';
-                imagesData.push(img);
-                markSessionDirty(true);
+                const placeholder = createLoosePlaceholderImage(files[i], i);
+                loosePlaceholders.push({ placeholder, file: files[i] });
+                imagesData.push(placeholder);
             }
         } catch (err) {
             console.error('Error procesando imagen:', err);
@@ -1563,6 +1756,14 @@ async function handleImageUpload(event) {
 
     imageCount = imagesData.length;
     renderGrid();
+    if (!currentSessionName && loosePlaceholders.length > 0) {
+        looseUploadTotalCount = loosePlaceholders.length;
+        looseUploadCompletedCount = 0;
+        showUploadLoader(0, looseUploadTotalCount, 'Subiendo fotos');
+        loosePlaceholders.forEach(({ placeholder, file }) => queueLooseImageUpload(placeholder, file));
+        markSessionDirty(true);
+        await waitForLooseUploadsToFinish();
+    }
     await hideUploadLoader();
     if (!currentSessionName) {
         fetchStorageUsage();
@@ -1604,6 +1805,7 @@ function resizeImage(dataUrl, maxSize, callback) {
 function renderGrid() {
     grid.innerHTML = '';
     grid.classList.remove('is-empty-state');
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
     if (!currentSessionName && imagesData.length === 0) {
         grid.classList.add('is-empty-state');
         grid.innerHTML = `
@@ -1624,6 +1826,7 @@ function renderGrid() {
         if (typeof window.updateScrollBtns === 'function') {
             setTimeout(() => window.updateScrollBtns(), 0);
         }
+        window.scrollTo(0, scrollTop);
         return;
     }
     imagesData.forEach((imageData, idx) => {
@@ -1638,6 +1841,7 @@ function renderGrid() {
     if (typeof window.updateScrollBtns === 'function') {
         setTimeout(() => window.updateScrollBtns(), 0);
     }
+    window.scrollTo(0, scrollTop);
 }
 
 function createImageBox(imageData, idx) {
@@ -1646,7 +1850,13 @@ function createImageBox(imageData, idx) {
     div.setAttribute('draggable', 'true');
     div.setAttribute('data-index', idx);
     div.addEventListener('dragstart', function(e) {
-        isInternalDrag = true;        handleDragStart.call(this, e);
+        const interactiveTarget = e.target.closest && e.target.closest('textarea, input, select, button, .image-loading-state');
+        if (interactiveTarget) {
+            e.preventDefault();
+            return;
+        }
+        isInternalDrag = true;
+        handleDragStart.call(this, e);
     });
     div.addEventListener('dragover', handleDragOver);
     div.addEventListener('dragleave', handleDragLeave);
@@ -1682,7 +1892,9 @@ function createImageBox(imageData, idx) {
     div.addEventListener('dragend', function(e) {
         isInternalDrag = false;        handleDragEnd.call(this, e);
     });
-    const shouldShowImageLoader = !!imageData.src && !loadedImagePreviewSources.has(imageData.src);
+    const displaySource = getImageDisplaySource(imageData);
+    const isPendingUpload = Boolean(imageData._pendingUpload || imageData._scope === 'library-pending');
+    const shouldShowImageLoader = isPendingUpload && !!displaySource && !loadedImagePreviewSources.has(displaySource);
     div.innerHTML = `
     <button class="remove-image-btn" title="Eliminar imagen" onclick="removeImage(${idx}, event)">×</button>
     <div class="image-container ${shouldShowImageLoader ? 'image-container-loading' : ''}" style="position:relative;">
@@ -1719,7 +1931,7 @@ function createImageBox(imageData, idx) {
                 </g>
             </svg>
         </div>
-        <img src="${imageData.src}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger ${shouldShowImageLoader ? 'is-loading' : ''}" data-idx="${idx}" />
+        <img src="${displaySource}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger ${shouldShowImageLoader ? 'is-loading' : ''}" data-idx="${idx}" />
     </div>
     <div class="image-label-desc-row">
         <div class="image-label">Foto ${imageData.index}</div>
@@ -1743,8 +1955,8 @@ function createImageBox(imageData, idx) {
         const elapsed = Date.now() - imageLoaderStartedAt;
         const remaining = Math.max(0, 5000 - elapsed);
         const revealImage = () => {
-            if (imageData.src) {
-                loadedImagePreviewSources.add(imageData.src);
+            if (displaySource) {
+                loadedImagePreviewSources.add(displaySource);
             }
             previewImg.classList.remove('is-loading');
             imageContainer.classList.remove('image-container-loading');
@@ -1769,6 +1981,13 @@ function createImageBox(imageData, idx) {
         previewImg.addEventListener('load', finishPreviewLoad, { once: true });
         previewImg.addEventListener('error', finishPreviewLoad, { once: true });
     }
+    previewImg.addEventListener('error', () => {
+        if (typeof imageData.imageData === 'string'
+            && imageData.imageData.startsWith('data:image/')
+            && previewImg.src !== imageData.imageData) {
+            previewImg.src = imageData.imageData;
+        }
+    });
     updateSelectStyle(div.querySelector('.status-select'));
     grid.appendChild(div);
 }
@@ -2358,110 +2577,94 @@ let cropperImg = new window.Image();
 let croppingIdx = null;
 let cropStart = null, cropEnd = null, cropping = false;
 let cropperOriginal = null; // Guarda el original para revertir
-let cropperRotation = 0; // 0, 90, 180, 270
+let cropperOriginalSrc = '';
+let cropperHasChanges = false;
 
-// --- Cropper: agregar botón de girar 90° y confirmar giro ---
-if (document.getElementById('cropperModal')) {
-    const cropperBtns = document.querySelector('.cropper-btns');
-    if (cropperBtns && !document.getElementById('cropperRotateBtn')) {
-        const rotateBtn = document.createElement('button');
-        rotateBtn.id = 'cropperRotateBtn';
-        rotateBtn.textContent = 'Girar 90°';
-        rotateBtn.style.marginRight = '8px';
-        rotateBtn.onclick = function() {
-            if (typeof cropperRotation === 'undefined') window.cropperRotation = 0;
-            cropperRotation = (cropperRotation + 90) % 360;
-            if (typeof drawCropperImage === 'function') drawCropperImage();
-            updateConfirmRotateBtn();
-        };
-        cropperBtns.insertBefore(rotateBtn, cropperBtns.firstChild);
-    }
-    // Botón Confirmar giro
-    if (!document.getElementById('cropperConfirmRotateBtn')) {
-        const confirmBtn = document.createElement('button');
-        confirmBtn.id = 'cropperConfirmRotateBtn';
-        confirmBtn.textContent = 'Confirmar giro';
-        confirmBtn.style.display = 'none';
-        confirmBtn.style.marginRight = '8px';
-        confirmBtn.onclick = function() {
-            // Guardar imagen girada completa
-            let angle = cropperRotation % 360;
-            let w = cropperImg.naturalWidth;
-            let h = cropperImg.naturalHeight;
-            let canvasW = (angle === 90 || angle === 270) ? h : w;
-            let canvasH = (angle === 90 || angle === 270) ? w : h;
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvasW;
-            tempCanvas.height = canvasH;
-            const tctx = tempCanvas.getContext('2d');
-            tctx.save();
-            if (angle === 90) {
-                tctx.translate(canvasW, 0);
-                tctx.rotate(Math.PI / 2);
-            } else if (angle === 180) {
-                tctx.translate(canvasW, canvasH);
-                tctx.rotate(Math.PI);
-            } else if (angle === 270) {
-                tctx.translate(0, canvasH);
-                tctx.rotate(3 * Math.PI / 2);
-            }
-            tctx.drawImage(cropperImg, 0, 0, w, h);
-            tctx.restore();
-            imagesData[croppingIdx].src = tempCanvas.toDataURL('image/png');
-            renderGrid();
-            cropperModal.style.display = 'none';
-        };
-        cropperBtns.insertBefore(confirmBtn, cropperBtns.firstChild.nextSibling);
-    }
-}
-// Función para mostrar/ocultar el botón Confirmar giro
-function updateConfirmRotateBtn() {
-    const btn = document.getElementById('cropperConfirmRotateBtn');
-    if (!btn) return;
-    if (cropperRotation % 360 !== 0) {
-        btn.style.display = '';
+function updateCropperActionButton() {
+    const actionBtn = document.getElementById('cropperOkBtn');
+    if (!actionBtn) return;
+    actionBtn.textContent = 'Confirmar cambios';
+    if (cropperHasChanges) {
+        actionBtn.style.display = '';
+        actionBtn.disabled = false;
     } else {
-        btn.style.display = 'none';
+        actionBtn.style.display = 'none';
+        actionBtn.disabled = true;
     }
 }
-// Llamar al abrir el cropper
-function openCropper(idx) {
-    croppingIdx = idx;
-    cropperRotation = 0;
-    cropperImg = new window.Image();
-    cropperImg.onload = function() {
-        drawCropperImage();
+
+function setCropperImageSource(src) {
+    const nextImg = new window.Image();
+    nextImg.onload = function() {
+        cropperImg = nextImg;
         cropStart = null;
         cropEnd = null;
-        cropperModal.style.display = 'flex';
-        updateConfirmRotateBtn();
+        drawCropperImage();
+        cropperHasChanges = true;
+        updateCropperActionButton();
     };
-    cropperImg.src = imagesData[idx].src;
+    nextImg.src = src;
 }
 
-// --- drawCropperImage con recorte y rotación ---
-function drawCropperImage() {
-    let w = cropperImg.naturalWidth;
-    let h = cropperImg.naturalHeight;
-    let angle = cropperRotation % 360;
-    let canvasW = (angle === 90 || angle === 270) ? h : w;
-    let canvasH = (angle === 90 || angle === 270) ? w : h;
-    cropperCanvas.width = canvasW;
-    cropperCanvas.height = canvasH;
-    cropperCtx.clearRect(0, 0, canvasW, canvasH);
-    cropperCtx.save();
-    if (angle === 90) {
-        cropperCtx.translate(canvasW, 0);
-        cropperCtx.rotate(Math.PI / 2);
-    } else if (angle === 180) {
-        cropperCtx.translate(canvasW, canvasH);
-        cropperCtx.rotate(Math.PI);
-    } else if (angle === 270) {
-        cropperCtx.translate(0, canvasH);
-        cropperCtx.rotate(3 * Math.PI / 2);
+function applyCropperRotation() {
+    if (!cropperImg || !cropperImg.naturalWidth || !cropperImg.naturalHeight) return;
+    const w = cropperImg.naturalWidth;
+    const h = cropperImg.naturalHeight;
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = h;
+    tempCanvas.height = w;
+    const tctx = tempCanvas.getContext('2d');
+    tctx.translate(h, 0);
+    tctx.rotate(Math.PI / 2);
+    tctx.drawImage(cropperImg, 0, 0, w, h);
+    setCropperImageSource(tempCanvas.toDataURL('image/png'));
+}
+
+function applyCropperSelection() {
+    if (!cropStart || !cropEnd) {
+        showToast('Selecciona un área válida antes de recortar.', 'info');
+        return;
     }
+    const x = Math.min(cropStart.x, cropEnd.x);
+    const y = Math.min(cropStart.y, cropEnd.y);
+    const w = Math.abs(cropEnd.x - cropStart.x);
+    const h = Math.abs(cropEnd.y - cropStart.y);
+    if (w < 10 || h < 10) {
+        showToast('Selecciona un área mayor para recortar.', 'info');
+        return;
+    }
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = Math.round(w);
+    tempCanvas.height = Math.round(h);
+    const tctx = tempCanvas.getContext('2d');
+    tctx.drawImage(cropperImg, x, y, w, h, 0, 0, w, h);
+    setCropperImageSource(tempCanvas.toDataURL('image/png'));
+}
+
+function openCropper(idx) {
+    croppingIdx = idx;
+    cropperOriginalSrc = imagesData[idx].src || '';
+    cropperImg = new window.Image();
+    cropperImg.onload = function() {
+        cropStart = null;
+        cropEnd = null;
+        cropperHasChanges = false;
+        drawCropperImage();
+        cropperModal.style.display = 'flex';
+        updateCropperActionButton();
+    };
+    cropperImg.src = cropperOriginalSrc;
+}
+
+// --- drawCropperImage ---
+function drawCropperImage() {
+    if (!cropperImg || !cropperImg.naturalWidth || !cropperImg.naturalHeight) return;
+    const w = cropperImg.naturalWidth;
+    const h = cropperImg.naturalHeight;
+    cropperCanvas.width = w;
+    cropperCanvas.height = h;
+    cropperCtx.clearRect(0, 0, w, h);
     cropperCtx.drawImage(cropperImg, 0, 0, w, h);
-    cropperCtx.restore();
     // Dibuja el rectángulo de recorte si está activo
     if (cropStart && cropEnd) {
         cropperCtx.save();
@@ -2515,6 +2718,14 @@ if (cropperCanvas) {
             y: (e.clientY - rect.top) * scaleY
         };
         drawCropperImage();
+        if (cropStart && cropEnd) {
+            const w = Math.abs(cropEnd.x - cropStart.x);
+            const h = Math.abs(cropEnd.y - cropStart.y);
+            if (w >= 10 && h >= 10) {
+                cropperHasChanges = true;
+                updateCropperActionButton();
+            }
+        }
     };
     // --- SOPORTE TOUCH SOLO EN EL MODAL CROPPER ---
     cropperCanvas.addEventListener('touchstart', function(e) {
@@ -2556,74 +2767,40 @@ if (cropperCanvas) {
             };
         }
         drawCropperImage();
+        if (cropStart && cropEnd) {
+            const w = Math.abs(cropEnd.x - cropStart.x);
+            const h = Math.abs(cropEnd.y - cropStart.y);
+            if (w >= 10 && h >= 10) {
+                cropperHasChanges = true;
+                updateCropperActionButton();
+            }
+        }
         e.preventDefault();
     }, { passive: false });
 }
 
-// --- Recorte correcto considerando la rotación ---
+function confirmCropperChanges() {
+    if (!cropperHasChanges || !imagesData[croppingIdx]) return;
+    imagesData[croppingIdx].src = cropperImg.src;
+    if (currentSessionName) {
+        markSessionDirty(true);
+    }
+    renderGrid();
+    cropperModal.style.display = 'none';
+}
+
 if (document.getElementById('cropperOkBtn')) {
-    document.getElementById('cropperOkBtn').onclick = function() {
-        let angle = cropperRotation % 360;
-        // Si NO hay recorte seleccionado, guardar la imagen completa girada
-        if (!cropStart || !cropEnd) {
-            // Crear canvas del tamaño correcto según rotación
-            let w = cropperImg.naturalWidth;
-            let h = cropperImg.naturalHeight;
-            let canvasW = (angle === 90 || angle === 270) ? h : w;
-            let canvasH = (angle === 90 || angle === 270) ? w : h;
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvasW;
-            tempCanvas.height = canvasH;
-            const tctx = tempCanvas.getContext('2d');
-            tctx.save();
-            if (angle === 90) {
-                tctx.translate(canvasW, 0);
-                tctx.rotate(Math.PI / 2);
-            } else if (angle === 180) {
-                tctx.translate(canvasW, canvasH);
-                tctx.rotate(Math.PI);
-            } else if (angle === 270) {
-                tctx.translate(0, canvasH);
-                tctx.rotate(3 * Math.PI / 2);
-            }
-            tctx.drawImage(cropperImg, 0, 0, w, h);
-            tctx.restore();
-            imagesData[croppingIdx].src = tempCanvas.toDataURL('image/png');
-            renderGrid();
-            cropperModal.style.display = 'none';
-            return;
-        }
-        // Si hay selección de recorte, proceder con el recorte normal
-        let x = Math.min(cropStart.x, cropEnd.x);
-        let y = Math.min(cropStart.y, cropEnd.y);
-        let w = Math.abs(cropEnd.x - cropStart.x);
-        let h = Math.abs(cropEnd.y - cropStart.y);
-        if (w < 10 || h < 10) return;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = w;
-        tempCanvas.height = h;
-        const tctx = tempCanvas.getContext('2d');
-        tctx.save();
-        if (angle === 0) {
-            tctx.drawImage(cropperImg, x, y, w, h, 0, 0, w, h);
-        } else if (angle === 90) {
-            tctx.translate(w, 0);
-            tctx.rotate(Math.PI / 2);
-            tctx.drawImage(cropperImg, y, cropperImg.naturalWidth - x - w, h, w, 0, 0, h, w);
-        } else if (angle === 180) {
-            tctx.translate(w, h);
-            tctx.rotate(Math.PI);
-            tctx.drawImage(cropperImg, cropperImg.naturalWidth - x - w, cropperImg.naturalHeight - y - h, w, h, 0, 0, w, h);
-        } else if (angle === 270) {
-            tctx.translate(0, h);
-            tctx.rotate(3 * Math.PI / 2);
-            tctx.drawImage(cropperImg, cropperImg.naturalHeight - y - h, x, h, w, 0, 0, h, w);
-        }
-        tctx.restore();
-        imagesData[croppingIdx].src = tempCanvas.toDataURL('image/png');
-        renderGrid();
-        cropperModal.style.display = 'none';
-    };
+    document.getElementById('cropperOkBtn').onclick = confirmCropperChanges;
+}
+
+const cropperCropBtn = document.getElementById('cropperCropBtn');
+if (cropperCropBtn) {
+    cropperCropBtn.onclick = applyCropperSelection;
+}
+
+const cropperRotateBtn = document.getElementById('cropperRotateBtn');
+if (cropperRotateBtn) {
+    cropperRotateBtn.onclick = applyCropperRotation;
 }
 
 // --- Botón cancelar/cerrar cropper ---
@@ -2740,6 +2917,9 @@ async function saveSessionToDB() {
     if (!name) {
         showToast('Escribe un nombre para la sesión.', 'error');
         return;
+    }
+    if (!currentSessionName) {
+        await waitForLooseUploadsToFinish();
     }
     const wasLibraryWorkspace = !currentSessionName;
     const libraryImageIdsToCleanup = wasLibraryWorkspace
@@ -2889,7 +3069,7 @@ async function loadSessionFromDB(options = {}) {
     }
     showAppLoader(options.loaderMessage || 'Cargando sesión...');
     try {
-        const res = await apiFetch(`/session/${encodeURIComponent(name)}?includeImageData=false`);
+        const res = await apiFetch(`/session/${encodeURIComponent(name)}?includeImageData=true`);
         if (!res.ok) {
             if (!options.silent) {
                 showToast('No se pudo cargar la sesión.', 'error');
@@ -2900,7 +3080,7 @@ async function loadSessionFromDB(options = {}) {
         const session = await res.json();
         const restoredDraft = options.forceServer ? false : restoreSessionDraftIntoState(name);
         if (!restoredDraft) {
-            imagesData = session.images.map(img => ({ ...img, imageData: '', src: getImageDisplaySource(img), _scope: 'session' }));
+            imagesData = session.images.map(img => ({ ...img, src: img.imageData || getImageDisplaySource(img), _scope: 'session' }));
             imageCount = imagesData.length;
             imageStartNumber = 1;
         }

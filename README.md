@@ -11,7 +11,6 @@ Aplicacion de reportes fotograficos con:
 1. Crea `.env` con las variables de Supabase.
 2. Instala dependencias:
 
-```powershell
 npm install
 ```
 
