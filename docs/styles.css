@@ -132,6 +132,7 @@ body {
 .upload-section-inner {
   display: flex !important;
   flex-direction: row !important;
+  flex-wrap: wrap !important;
   justify-content: center;
   align-items: center;
   gap: 18px !important;
@@ -143,15 +144,22 @@ body {
   position: relative;
   z-index: 2;
 }
+.upload-section-inner > * {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 100%;
+}
 
 #imageInputWrapper.main-btn,
+#cameraInputWrapper.main-btn,
 #clearBtn.main-btn,
-#quickStateBtn.main-btn {
-  min-width: 180px;
-  max-width: 220px;
-  width: 200px;
+#quickStateBtn.main-btn,
+#reloadSavedBtn.main-btn {
+  min-width: 140px;
+  max-width: 100%;
+  width: auto;
   height: 48px;
-  padding: 0 12px; /* reduce padding for more text space */
+  padding: 0 14px;
   background: linear-gradient(90deg, #3498db 0%, #2980b9 100%) !important;
   color: #fff !important;
   font-weight: bold;
@@ -173,6 +181,7 @@ body {
   line-height: 1.2;
 }
 #imageInputWrapper.main-btn:hover,
+#cameraInputWrapper.main-btn:hover,
 #clearBtn.main-btn:hover,
 #quickStateBtn.main-btn:hover {
   background: linear-gradient(90deg, #217dbb 0%, #3498db 100%) !important;
@@ -224,6 +233,24 @@ body {
   text-align: center;
   line-height: 1.2;
 }
+#cameraInputWrapper label {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  color: inherit !important;
+  padding: 0;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  text-align: center;
+  line-height: 1.2;
+}
 #imageInputWrapper input[type="file"] {
   width: 100%;
   height: 100%;
@@ -238,19 +265,44 @@ body {
 @media (max-width: 600px) {
   .upload-section-inner {
     flex-direction: column !important;
+    flex-wrap: nowrap !important;
     gap: 12px !important;
     max-width: 98vw;
+    justify-content: stretch;
+    align-items: stretch;
   }
-  #imageInputWrapper.main-btn, #clearBtn.main-btn, #quickStateBtn.main-btn {
-    min-width: 120px;
-    max-width: 98vw;
+  .upload-section-inner > * {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  #imageInputWrapper.main-btn,
+  #cameraInputWrapper.main-btn,
+  #clearBtn.main-btn,
+  #quickStateBtn.main-btn,
+  #reloadSavedBtn.main-btn {
     width: 100%;
-    font-size: 0.95rem;
-    padding: 0 6px;
+    font-size: 0.88rem;
+    padding: 0.75rem 12px;
     white-space: normal;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
     word-break: break-word;
     text-align: center;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 900px) {
+  .upload-section-inner {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    max-width: 100%;
+  }
+  .upload-section-inner > * {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 }
 
@@ -400,61 +452,167 @@ body {
 .cropper-modal {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.7);
+    background: rgba(15, 23, 42, 0.78);
+    backdrop-filter: blur(8px);
     z-index: 9999;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: 24px;
 }
 .cropper-container {
-    background: #fff;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(246,250,255,0.98) 100%);
+    padding: 24px;
+    border-radius: 28px;
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35);
+    border: 1px solid rgba(148, 163, 184, 0.28);
     display: flex;
     flex-direction: column;
     align-items: center;
-    max-width: 95vw;
-    width: min(95vw, 1000px);
+    max-width: 96vw;
+    width: min(96vw, 1120px);
     box-sizing: border-box;
+}
+.cropper-header {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 18px;
+    text-align: center;
+}
+.cropper-kicker {
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #64748b;
+}
+.cropper-title {
+    font-size: 1.55rem;
+    font-weight: 800;
+    color: #1e3a8a;
+}
+.cropper-hint {
+    font-size: 1rem;
+    color: #47638f;
+    line-height: 1.45;
+}
+.cropper-stage {
+    width: 100%;
+    padding: 16px;
+    border-radius: 24px;
+    background:
+        linear-gradient(180deg, rgba(220, 234, 255, 0.55), rgba(255, 255, 255, 0.9)),
+        radial-gradient(circle at top left, rgba(96, 165, 250, 0.16), transparent 46%);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
 }
 #cropperCanvas {
     width: 100% !important;
     height: auto !important;
-    max-width: calc(100vw - 80px) !important;
-    max-height: calc(80vh - 120px) !important;
+    max-width: calc(100vw - 120px) !important;
+    max-height: calc(75vh - 170px) !important;
     display: block;
     margin: 0 auto;
     box-sizing: border-box;
     background: #fff;
-    border: 1px solid #ccc;
+    border-radius: 20px;
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    box-shadow: 0 18px 40px rgba(30, 64, 175, 0.14);
+    cursor: grab;
+}
+#cropperCanvas.cropper-selecting {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'%3E%3Cpath fill='%23111' d='M9.64 7.64L8.22 6.22L5.39 9.05l1.41 1.41l2.84-2.82m8.97 7.56l-2.83 2.83l-1.42-1.42l2.83-2.82l1.42 1.41M14.88 3l1.41 1.41L4.41 16.29L3 14.88L14.88 3m3.53 14.12L20 18.71L18.71 20L17.12 18.41l1.29-1.29M5.59 17.12L7.17 18.7L5.88 20L4.29 18.41l1.3-1.29Z'/%3E%3C/svg%3E") 6 6, crosshair;
 }
 .cropper-btns {
-    margin-top: 12px;
+    margin-top: 18px;
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
     justify-content: center;
+    width: 100%;
 }
-.cropper-btns {
-    margin-top: 12px;
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-}
-.cropper-btns button {
-    padding: 6px 18px;
-    border-radius: 6px;
-    border: none;
-    background: #3498db;
+.cropper-btn {
+    min-width: 150px;
+    padding: 12px 20px;
+    border-radius: 16px;
+    border: 1px solid transparent;
     color: #fff;
-    font-weight: bold;
+    font-weight: 800;
     cursor: pointer;
     font-family: Tahoma, Arial, sans-serif;
+    font-size: 1rem;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease, border-color 0.25s ease;
 }
-.cropper-btns button.cancel {
-    background: #e74c3c;
+.cropper-btn:hover {
+    transform: translateY(-1px);
+}
+.cropper-btn-primary {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    box-shadow: 0 16px 30px rgba(37, 99, 235, 0.22);
+}
+.cropper-btn-primary.is-armed {
+    background: linear-gradient(135deg, #0f172a, #1e3a8a);
+    box-shadow: 0 18px 32px rgba(15, 23, 42, 0.28);
+}
+.cropper-btn-primary.is-armed::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.24);
+}
+.cropper-btn-secondary {
+    background: linear-gradient(135deg, #eef4ff, #dbeafe);
+    color: #1e40af;
+    border-color: rgba(96, 165, 250, 0.45);
+}
+.cropper-btn-confirm {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    box-shadow: 0 16px 30px rgba(34, 197, 94, 0.22);
+}
+.cropper-btn-cancel {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    box-shadow: 0 16px 30px rgba(239, 68, 68, 0.2);
+}
+.cropper-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+@media (max-width: 768px) {
+    .cropper-modal {
+        padding: 14px;
+    }
+    .cropper-container {
+        padding: 18px;
+        border-radius: 22px;
+    }
+    .cropper-title {
+        font-size: 1.18rem;
+    }
+    .cropper-hint {
+        font-size: 0.92rem;
+    }
+    .cropper-stage {
+        padding: 10px;
+        border-radius: 18px;
+    }
+    #cropperCanvas {
+        max-width: calc(100vw - 56px) !important;
+        max-height: calc(72vh - 170px) !important;
+    }
+    .cropper-btns {
+        gap: 10px;
+    }
+    .cropper-btn {
+        min-width: calc(50% - 10px);
+        flex: 1 1 calc(50% - 10px);
+        font-size: 0.94rem;
+        padding: 11px 14px;
+    }
 }
 
 .estado-icono {
@@ -996,8 +1154,15 @@ body {
 
 @media (max-width: 420px) {
     .image-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 18px 10px;
+        grid-template-columns: 1fr;
+        gap: 18px 0;
+        padding: 0 12px;
+    }
+    .image-card,
+    .image-box {
+        width: calc(100% - 24px);
+        max-width: 100%;
+        margin: 0 auto;
     }
 }
 

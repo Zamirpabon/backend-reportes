@@ -683,22 +683,45 @@
 
     const imageMatch = requestUrl.pathname.match(/^\/image\/([^/]+)$/);
     if (imageMatch && method === 'PUT') {
-      const { description = '', status = '' } = body || {};
+      const { description = '', status = '', imageData = '' } = body || {};
       const found = await findImageRecordById(decodeURIComponent(imageMatch[1]));
       if (!found) return createApiResponse({ error: 'Imagen no encontrada' }, 404);
+      let nextStoragePath = found.row.storage_path;
+      let nextMimeType = found.row.mime_type;
+      let newUpload = null;
 
-      const { error } = await client.from(found.table).update({ description, status }).eq('id', found.row.id);
-      if (error) throw new Error(`No se pudo actualizar la imagen: ${error.message}`);
+      if (typeof imageData === 'string' && imageData.startsWith('data:image/')) {
+        newUpload = await uploadDataUrl(imageData, found.table === 'session_images' ? 'sessions' : 'uploads');
+        nextStoragePath = newUpload.storagePath;
+        nextMimeType = newUpload.mimeType;
+      }
 
-      return createApiResponse({
-        ok: true,
-        _id: found.row.id,
-        description,
-        status,
-        createdAt: found.row.created_at,
-        storagePath: found.row.storage_path,
-        mimeType: found.row.mime_type
-      });
+      const { data: updatedRow, error } = await client
+        .from(found.table)
+        .update({
+          description,
+          status,
+          storage_path: nextStoragePath,
+          mime_type: nextMimeType
+        })
+        .eq('id', found.row.id)
+        .select()
+        .single();
+
+      if (error) {
+        if (newUpload) {
+          await deleteStoragePaths([newUpload.storagePath]);
+        }
+        throw new Error(`No se pudo actualizar la imagen: ${error.message}`);
+      }
+
+      if (newUpload && found.row.storage_path && found.row.storage_path !== newUpload.storagePath) {
+        await deleteStoragePathsIfUnreferenced([
+          { table: found.table, id: found.row.id, storage_path: found.row.storage_path }
+        ]);
+      }
+
+      return createApiResponse(await serializeImageRow(updatedRow, { includeImageData: false }));
     }
 
     if (imageMatch && method === 'DELETE') {

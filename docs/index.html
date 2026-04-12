@@ -446,8 +446,15 @@
                 <div id="imageInputWrapper" class="main-btn">
                     <label for="imageInput">
                         <span class="btn-icon btn-icon-camera"></span>
-                        <span>Seleccionar Imágenes</span>
+                        <span>Seleccionar imágenes</span>
                         <input type="file" multiple accept="image/*" id="imageInput" style="display:none;">
+                    </label>
+                </div>
+                <div id="cameraInputWrapper" class="main-btn">
+                    <label for="cameraInput">
+                        <span class="btn-icon btn-icon-camera"></span>
+                        <span>Tomar foto</span>
+                        <input type="file" accept="image/*;capture=camera" capture="camera" id="cameraInput" style="display:none;">
                     </label>
                 </div>
                 <button id="clearBtn" class="main-btn" type="button">
@@ -639,12 +646,19 @@
 
       <div id="cropperModal" class="cropper-modal" style="display:none;">
         <div class="cropper-container">
-            <canvas id="cropperCanvas"></canvas>
+            <div class="cropper-header">
+                <div class="cropper-kicker">Editor de imagen</div>
+                <div class="cropper-title">Ajusta el recorte antes de guardarlo</div>
+                <div id="cropperHint" class="cropper-hint">Toca Recortar para marcar el área que quieres conservar.</div>
+            </div>
+            <div class="cropper-stage">
+                <canvas id="cropperCanvas"></canvas>
+            </div>
             <div class="cropper-btns">
-                <button id="cropperCropBtn">Recortar</button>
-                <button id="cropperRotateBtn">Girar 90°</button>
-                <button id="cropperOkBtn" style="display:none;" disabled>Confirmar cambios</button>
-                <button class="cancel" id="cropperCancelBtn">Cancelar</button>
+                <button id="cropperCropBtn" class="cropper-btn cropper-btn-primary">Recortar</button>
+                <button id="cropperRotateBtn" class="cropper-btn cropper-btn-secondary">Girar 90°</button>
+                <button id="cropperOkBtn" class="cropper-btn cropper-btn-confirm" style="display:none;" disabled>Confirmar cambios</button>
+                <button class="cropper-btn cropper-btn-cancel" id="cropperCancelBtn">Cancelar</button>
             </div>
         </div>
     </div>

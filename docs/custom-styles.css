@@ -909,12 +909,24 @@ html {
 }
 
 .upload-section-inner {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  flex-wrap: wrap !important;
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  align-items: stretch !important;
+  justify-content: stretch !important;
   gap: 14px !important;
-  max-width: 980px !important;
+  max-width: 1120px !important;
+  width: min(calc(100% - 64px), 1120px) !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.upload-section-inner > * {
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
 }
 
 .session-dropdown .btn-more#optionsMenuBtn {
@@ -925,30 +937,65 @@ html {
 }
 
 #imageInputWrapper.main-btn,
+#cameraInputWrapper.main-btn,
 #clearBtn.main-btn,
 #quickStateBtn.main-btn,
 #reloadSavedBtn.main-btn {
-  width: auto !important;
-  min-width: 220px !important;
-  max-width: none !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
   height: 56px !important;
   border-radius: 16px !important;
   white-space: nowrap !important;
   font-size: 0.99rem !important;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08) !important;
+  overflow: hidden;
 }
 
 #imageInputWrapper.main-btn {
   box-shadow: 0 16px 30px rgba(59,130,246,0.32) !important;
 }
 
+#cameraInputWrapper.main-btn {
+  background: linear-gradient(135deg, #2b95d6 0%, #2563eb 50%, #0f7cc0 100%) !important;
+  box-shadow: 0 16px 30px rgba(37, 99, 235, 0.24) !important;
+}
+
 #imageInputWrapper label,
+#cameraInputWrapper label,
 #clearBtn,
 #quickStateBtn,
 #reloadSavedBtn {
   white-space: nowrap !important;
   gap: 10px;
   letter-spacing: 0.01em;
+}
+
+#cameraInputWrapper label {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff !important;
+  font-weight: 800;
+}
+
+#imageInputWrapper label,
+#cameraInputWrapper label,
+#clearBtn,
+#quickStateBtn,
+#reloadSavedBtn {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+#cameraInputWrapper.main-btn:hover {
+  background: linear-gradient(135deg, #227fbc 0%, #1d4ed8 50%, #0b6ba7 100%) !important;
+  box-shadow: 0 18px 34px rgba(37, 99, 235, 0.28) !important;
+  transform: translateY(-2px);
 }
 
 .upload-actions-row,
@@ -965,8 +1012,39 @@ html {
 #clearBtn:active,
 #quickStateBtn:active,
 #reloadSavedBtn:active,
-#imageInputWrapper label:active {
+#imageInputWrapper label:active,
+#cameraInputWrapper label:active {
   transform: translateY(0) scale(0.985);
+}
+
+@media (max-width: 1180px) {
+  .upload-section-inner {
+    width: min(calc(100% - 48px), 1120px) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  #reloadSavedBtn.main-btn {
+    grid-column: 2 / 4 !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .upload-section-inner {
+    width: min(calc(100% - 32px), 1120px) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  #reloadSavedBtn.main-btn {
+    grid-column: auto !important;
+  }
+}
+
+@media (max-width: 540px) {
+  .upload-section-inner {
+    width: calc(100% - 20px) !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
 }
 
 .btn-icon {
@@ -3905,6 +3983,7 @@ body.quick-state-mode .image-box.quick-state-ready {
   }
 
   #imageInputWrapper.main-btn,
+  #cameraInputWrapper.main-btn,
   #clearBtn.main-btn,
   #quickStateBtn.main-btn,
   #reloadSavedBtn.main-btn {
@@ -3917,19 +3996,24 @@ body.quick-state-mode .image-box.quick-state-ready {
     grid-column: 1 !important;
   }
 
-  #clearBtn.main-btn {
+  #cameraInputWrapper.main-btn {
     grid-column: 2 !important;
   }
 
-  #quickStateBtn.main-btn {
+  #clearBtn.main-btn {
     grid-column: 1 !important;
   }
 
-  #reloadSavedBtn.main-btn {
+  #quickStateBtn.main-btn {
     grid-column: 2 !important;
   }
 
+  #reloadSavedBtn.main-btn {
+    grid-column: 1 / -1 !important;
+  }
+
   #imageInputWrapper label,
+  #cameraInputWrapper label,
   #clearBtn,
   #quickStateBtn,
   #reloadSavedBtn {
