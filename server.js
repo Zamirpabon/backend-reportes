@@ -22,6 +22,9 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
 ]);
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
+// Clave para proteger el endpoint de mantenimiento
+const MAINTENANCE_KEY = process.env.MAINTENANCE_KEY || 'maintenance-key-change-me';
+
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
 const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
 
@@ -501,9 +504,264 @@ async function getStorageUsageSnapshot() {
   };
 }
 
+async function findOrphanedSessions() {
+  // Buscar sesiones que no tienen imágenes en el batch actual
+  const { data: sessions, error: sessionsError } = await supabase
+    .from('sessions')
+    .select('id, name, current_batch_id');
+
+  if (sessionsError) {
+    throw new Error(`No se pudieron consultar sesiones: ${sessionsError.message}`);
+  }
+
+  if (!sessions || sessions.length === 0) {
+    return [];
+  }
+
+  const orphaned = [];
+
+  for (const session of sessions) {
+    if (!session.current_batch_id) {
+      // Sesión sin batch actual
+      orphaned.push({
+        id: session.id,
+        name: session.name,
+        reason: 'no_current_batch'
+      });
+      continue;
+    }
+
+    // Verificar si esa sesión tiene imágenes en su batch
+    const { data: images, error: imagesError } = await supabase
+      .from('session_images')
+      .select('id')
+      .eq('session_id', session.id)
+      .eq('batch_id', session.current_batch_id);
+
+    if (imagesError) {
+      logWarn('No se pudo revisar imágenes de sesión', {
+        sessionId: session.id,
+        error: imagesError.message
+      });
+      continue;
+    }
+
+    if (!images || images.length === 0) {
+      orphaned.push({
+        id: session.id,
+        name: session.name,
+        reason: 'no_images_in_batch'
+      });
+    }
+  }
+
+  return orphaned;
+}
+
+async function deleteOrphanedSessions(orphanedList) {
+  if (!orphanedList || orphanedList.length === 0) {
+    return { deletedCount: 0, errors: [] };
+  }
+
+  const errors = [];
+  let deletedCount = 0;
+
+  for (const orphan of orphanedList) {
+    try {
+      const { error } = await supabase
+        .from('sessions')
+        .delete()
+        .eq('id', orphan.id);
+
+      if (error) {
+        errors.push({
+          sessionId: orphan.id,
+          sessionName: orphan.name,
+          error: error.message
+        });
+      } else {
+        deletedCount++;
+      }
+    } catch (err) {
+      errors.push({
+        sessionId: orphan.id,
+        sessionName: orphan.name,
+        error: err.message
+      });
+    }
+  }
+
+  return { deletedCount, errors };
+}
+
+async function runMaintenanceTasks() {
+  const startTime = Date.now();
+  const results = {
+    success: true,
+    timestamp: new Date().toISOString(),
+    durationMs: 0,
+    tasks: {}
+  };
+
+  try {
+    // Tarea 1: Limpiar imágenes temporales expiradas
+    logInfo('Iniciando tarea de mantenimiento: limpieza de imágenes temporales...');
+    try {
+      const cutoffIso = new Date(Date.now() - (LOOSE_IMAGE_RETENTION_HOURS * 60 * 60 * 1000)).toISOString();
+      const { data: expiredImages, error } = await supabase
+        .from('images')
+        .select('id, storage_path')
+        .lt('created_at', cutoffIso);
+
+      if (error) {
+        throw error;
+      }
+
+      results.tasks.cleanupExpiredLoose = {
+        success: true,
+        processedCount: expiredImages?.length || 0,
+        reason: `Limpieza de imágenes con más de ${LOOSE_IMAGE_RETENTION_HOURS} horas`
+      };
+    } catch (error) {
+      results.tasks.cleanupExpiredLoose = {
+        success: false,
+        error: error.message
+      };
+      logWarn('Falló la limpieza de imágenes temporales', { error: error.message });
+    }
+
+    // Tarea 2: Revisar sesiones huérfanas
+    logInfo('Iniciando tarea de mantenimiento: búsqueda de sesiones huérfanas...');
+    try {
+      const orphaned = await findOrphanedSessions();
+      const cleanupResult = await deleteOrphanedSessions(orphaned);
+
+      results.tasks.cleanupOrphanedSessions = {
+        success: true,
+        foundCount: orphaned.length,
+        deletedCount: cleanupResult.deletedCount,
+        errorCount: cleanupResult.errors.length,
+        errors: cleanupResult.errors.slice(0, 5) // Mostrar solo los primeros 5 errores
+      };
+
+      if (cleanupResult.deletedCount > 0) {
+        logInfo(`Limpieza de sesiones huérfanas completada`, {
+          deletedCount: cleanupResult.deletedCount
+        });
+      }
+    } catch (error) {
+      results.tasks.cleanupOrphanedSessions = {
+        success: false,
+        error: error.message
+      };
+      logWarn('Falló la búsqueda de sesiones huérfanas', { error: error.message });
+    }
+
+    // Tarea 3: Obtener snapshot de uso de storage (verifica que Supabase responda)
+    logInfo('Iniciando tarea de mantenimiento: verificación de uso de storage...');
+    try {
+      const usage = await getStorageUsageSnapshot();
+      results.tasks.storageUsage = {
+        success: true,
+        filesCount: usage.filesCount,
+        usedBytes: usage.usedBytes,
+        limitBytes: usage.limitBytes,
+        usagePercent: usage.usagePercent
+      };
+
+      logInfo('Snapshot de storage obtenido exitosamente', { usagePercent: usage.usagePercent });
+    } catch (error) {
+      results.tasks.storageUsage = {
+        success: false,
+        error: error.message
+      };
+      logWarn('Falló la obtención del snapshot de storage', { error: error.message });
+    }
+
+    // Tarea 4: Lectura simple de verificación (heartbeat)
+    logInfo('Iniciando tarea de mantenimiento: heartbeat a Supabase...');
+    try {
+      const { data: sessions, error } = await supabase
+        .from('sessions')
+        .select('id')
+        .limit(1);
+
+      if (error) {
+        throw error;
+      }
+
+      results.tasks.heartbeat = {
+        success: true,
+        timestamp: new Date().toISOString()
+      };
+
+      logInfo('Heartbeat exitoso', { timestamp: new Date().toISOString() });
+    } catch (error) {
+      results.tasks.heartbeat = {
+        success: false,
+        error: error.message
+      };
+      logWarn('Falló el heartbeat a Supabase', { error: error.message });
+    }
+
+    results.durationMs = Date.now() - startTime;
+    logInfo('Ciclo de mantenimiento completado', {
+      durationMs: results.durationMs,
+      tasksSuccessful: Object.values(results.tasks).filter((t) => t.success).length,
+      tasksTotal: Object.keys(results.tasks).length
+    });
+
+    return results;
+  } catch (error) {
+    results.success = false;
+    results.error = error.message;
+    results.durationMs = Date.now() - startTime;
+    logError('Error general en ciclo de mantenimiento', error, { durationMs: results.durationMs });
+    return results;
+  }
+}
+
 app.get('/health', (req, res) => {
   res.json({ ok: true, database: 'supabase', bucket: STORAGE_BUCKET });
 });
+
+app.post('/maintenance', asyncHandler(async (req, res) => {
+  const providedKey = req.query.key || req.body?.key;
+
+  if (!providedKey || providedKey !== MAINTENANCE_KEY) {
+    logWarn('Acceso rechazado a endpoint de mantenimiento', {
+      endpoint: '/maintenance',
+      hasKey: !!providedKey,
+      ip: req.ip
+    });
+    return res.status(401).json({
+      error: 'Clave de mantenimiento inválida o faltante',
+      endpoint: '/maintenance?key=YOUR_KEY'
+    });
+  }
+
+  const results = await runMaintenanceTasks();
+  res.json(results);
+}));
+
+app.get('/maintenance', asyncHandler(async (req, res) => {
+  const providedKey = req.query.key;
+
+  if (!providedKey || providedKey !== MAINTENANCE_KEY) {
+    logWarn('Acceso rechazado a endpoint de mantenimiento', {
+      endpoint: '/maintenance',
+      hasKey: !!providedKey,
+      ip: req.ip
+    });
+    return res.status(401).json({
+      error: 'Clave de mantenimiento inválida o faltante',
+      endpoint: '/maintenance?key=YOUR_KEY'
+    });
+  }
+
+  const results = await runMaintenanceTasks();
+  res.json(results);
+}));
 
 app.get('/usage', asyncHandler(async (req, res) => {
   const usage = await getStorageUsageSnapshot();

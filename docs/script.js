@@ -74,9 +74,21 @@ let looseUploadTotalCount = 0;
 let looseUploadCompletedCount = 0;
 let uploadLoaderDisplayCount = 0;
 let uploadLoaderDisplayTimer = null;
+let imageGridSortable = null;
 
 // Agregar input para número inicial de imagen
 let imageStartNumber = 1;
+let nextImageUiId = 1;
+
+function ensureImageUiId(imageData) {
+    if (!imageData || typeof imageData !== 'object') {
+        return `img-ui-${nextImageUiId++}`;
+    }
+    if (!imageData._uiId) {
+        imageData._uiId = `img-ui-${nextImageUiId++}`;
+    }
+    return imageData._uiId;
+}
 
 input.addEventListener('change', handleImageUpload);
 if (cameraInput) {
@@ -2036,6 +2048,8 @@ function renderGrid() {
             </div>
         `;
         updateImageCounter();
+        suppressNextGridEnterAnimation = false;
+        ensureImageGridSortable();
         if (typeof window.updateScrollBtns === 'function') {
             setTimeout(() => window.updateScrollBtns(), 0);
         }
@@ -2046,7 +2060,10 @@ function renderGrid() {
         imageData.index = imageStartNumber + idx;
         createImageBox(imageData, idx);
     });
+    suppressNextGridEnterAnimation = false;
+    pendingDropCelebrateIdx = null;
     updateImageCounter(); // <-- Siempre actualiza el contador tras renderizar
+    ensureImageGridSortable();
     // --- NUEVO: Si está en modo selección rápida, re-aplicar handlers ---
     if (window.quickStateMode) {
         applyQuickStateHandlers();
@@ -2059,51 +2076,59 @@ function renderGrid() {
 
 function createImageBox(imageData, idx) {
     const div = document.createElement('div');
-    div.className = `image-box image-enter ${getCardStatusClass(imageData.status)}`.trim();
-    div.setAttribute('draggable', 'true');
+    const imageUiId = ensureImageUiId(imageData);
+    const enterClass = suppressNextGridEnterAnimation ? '' : 'image-enter';
+    const dropCelebrateClass = pendingDropCelebrateIdx === imageUiId ? 'image-drop-celebrate' : '';
+    div.className = `image-box ${enterClass} ${dropCelebrateClass} ${getCardStatusClass(imageData.status)}`.trim();
     div.setAttribute('data-index', idx);
-    div.addEventListener('dragstart', function(e) {
-        const interactiveTarget = e.target.closest && e.target.closest('textarea, input, select, button, .image-loading-state');
-        if (interactiveTarget) {
-            e.preventDefault();
-            return;
-        }
-        isInternalDrag = true;
-        handleDragStart.call(this, e);
-    });
+    div.setAttribute('data-ui-id', imageUiId);
+    if (!window.Sortable) {
+        div.addEventListener('pointerdown', function(e) {
+            handlePointerDragStartIntent.call(this, e);
+        });
+    }
     div.addEventListener('dragover', handleDragOver);
     div.addEventListener('dragleave', handleDragLeave);
     div.addEventListener('drop', function(e) {
-        e.preventDefault();
         this.classList.remove('drag-over-animated');
         const indicator = this.querySelector('.drop-indicator');
         if (indicator) indicator.style.display = 'none';
-        // Si el drop contiene archivos (imágenes) Y NO es drag interno, reemplazar la imagen de esta tarjeta (optimizada)
-        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0 && !isInternalDrag) {
-            const file = e.dataTransfer.files[0];
-            if (file.type && file.type.startsWith('image/')) {
-                const validationError = validateImageFile(file);
-                if (validationError) {
-                    showToast(validationError, 'error');
-                    return;
-                }
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    resizeImage(ev.target.result, 1024, (resizedDataUrl) => {
-                        imagesData[idx].src = resizedDataUrl;
-                        renderGrid();
-                        updateImageCounter();
-                    });
-                };
-                reader.readAsDataURL(file);
-                return; // Importante: no ejecutar reordenamiento si es archivo
-            }
+
+        if (isInternalDrag) {
+            return;
         }
-        // Si no, es un reordenamiento normal
-        handleDrop.call(this, e);
-    });
-    div.addEventListener('dragend', function(e) {
-        isInternalDrag = false;        handleDragEnd.call(this, e);
+
+        const transferTypes = Array.from(e.dataTransfer?.types || []);
+        const hasFiles = transferTypes.includes('Files') && e.dataTransfer?.files?.length > 0;
+        if (!hasFiles) {
+            return;
+        }
+
+        e.preventDefault();
+
+        const liveIdx = Number(this.getAttribute('data-index'));
+        if (!Number.isInteger(liveIdx) || !imagesData[liveIdx]) {
+            return;
+        }
+
+        // Si el drop contiene archivos (imágenes), reemplazar la imagen de esta tarjeta (optimizada)
+        const file = e.dataTransfer.files[0];
+        if (file.type && file.type.startsWith('image/')) {
+            const validationError = validateImageFile(file);
+            if (validationError) {
+                showToast(validationError, 'error');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                resizeImage(ev.target.result, 1024, (resizedDataUrl) => {
+                    imagesData[liveIdx].src = resizedDataUrl;
+                    renderGrid();
+                    updateImageCounter();
+                });
+            };
+            reader.readAsDataURL(file);
+        }
     });
     const displaySource = getImageDisplaySource(imageData);
     const isPendingUpload = Boolean(imageData._pendingUpload || imageData._scope === 'library-pending');
@@ -2144,7 +2169,7 @@ function createImageBox(imageData, idx) {
                 </g>
             </svg>
         </div>
-        <img src="${displaySource}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger ${shouldShowImageLoader ? 'is-loading' : ''}" data-idx="${idx}" />
+        <img src="${displaySource}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger ${shouldShowImageLoader ? 'is-loading' : ''}" data-idx="${idx}" draggable="false" />
     </div>
     <div class="image-label-desc-row">
         <div class="image-label">Foto ${imageData.index}</div>
@@ -2183,9 +2208,25 @@ function createImageBox(imageData, idx) {
         }
     };
     previewImg.onclick = function(e) {
-        if (!window.quickStateMode) showImageCropper(idx);
+        if (Date.now() < dragClickSuppressUntil) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        const liveIdx = Number(this.getAttribute('data-idx'));
+        if (!window.quickStateMode && Number.isInteger(liveIdx)) {
+            showImageCropper(liveIdx);
+        }
         e.stopPropagation();
     };
+    previewImg.addEventListener('dragstart', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    imageContainer.addEventListener('dragstart', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    });
     if (!shouldShowImageLoader) {
         finishPreviewLoad();
     } else if (previewImg.complete && previewImg.naturalWidth > 0) {
@@ -2206,22 +2247,823 @@ function createImageBox(imageData, idx) {
     grid.appendChild(div);
 }
 
+function syncVisibleImageCardBindings() {
+    if (!grid) return;
+
+    const cards = Array.from(grid.querySelectorAll('.image-box'));
+    cards.forEach((box, idx) => {
+        const imageData = imagesData[idx];
+        if (!imageData) return;
+
+        imageData.index = imageStartNumber + idx;
+        box.setAttribute('data-index', idx);
+
+        const removeBtn = box.querySelector('.remove-image-btn');
+        if (removeBtn) {
+            removeBtn.setAttribute('onclick', `removeImage(${idx}, event)`);
+        }
+
+        const previewImg = box.querySelector('.img-cropper-trigger');
+        if (previewImg) {
+            previewImg.setAttribute('data-idx', idx);
+            previewImg.alt = `Imagen ${imageData.index}`;
+        }
+
+        const label = box.querySelector('.image-label');
+        if (label) {
+            label.textContent = `Foto ${imageData.index}`;
+        }
+
+        const textarea = box.querySelector('.description');
+        if (textarea) {
+            textarea.setAttribute('onchange', `updateImageData(${idx}, 'description', this.value)`);
+        }
+
+        const select = box.querySelector('.status-select');
+        if (select) {
+            select.setAttribute('onchange', `updateImageData(${idx}, 'status', this.value); updateSelectStyle(this)`);
+        }
+    });
+
+    updateImageCounter();
+    if (typeof window.updateScrollBtns === 'function') {
+        setTimeout(() => window.updateScrollBtns(), 0);
+    }
+}
+
+function triggerImageDropCelebrate(cardEl) {
+    if (!cardEl) return;
+
+    cardEl.classList.remove('image-drop-celebrate');
+    void cardEl.offsetWidth;
+    cardEl.classList.add('image-drop-celebrate');
+    window.setTimeout(() => {
+        cardEl.classList.remove('image-drop-celebrate');
+    }, 760);
+}
+
+function cleanupSortableVisualState(cardEl) {
+    if (!cardEl) return;
+    cardEl.classList.remove('image-drag-picked', 'sortable-hover-target');
+    const indicator = cardEl.querySelector('.drop-indicator');
+    if (indicator) indicator.style.display = 'none';
+}
+
+let sortableDragSession = null;
+let sortableCursorGhost = null;
+let sortablePendingPick = null;
+
+function updateSortableDragPointerFromEvent(eventLike) {
+    if (!sortableDragSession || !eventLike) return;
+
+    const point = eventLike.touches?.[0]
+        || eventLike.changedTouches?.[0]
+        || eventLike;
+
+    if (typeof point.clientX !== 'number' || typeof point.clientY !== 'number') {
+        return;
+    }
+
+    sortableDragSession.pointerX = point.clientX;
+    sortableDragSession.pointerY = point.clientY;
+    updateSortableCursorGhostPosition();
+}
+
+function getSortableFallbackGhostRect() {
+    return document.querySelector('.sortable-fallback')?.getBoundingClientRect?.() || null;
+}
+
+function removeSortableCursorGhost() {
+    if (!sortableCursorGhost) return;
+    sortableCursorGhost.remove();
+    sortableCursorGhost = null;
+}
+
+function updateSortableCursorGhostPosition() {
+    if (!sortableDragSession || !sortableCursorGhost) return;
+    if (!Number.isFinite(sortableDragSession.pointerX) || !Number.isFinite(sortableDragSession.pointerY)) return;
+
+    const left = sortableDragSession.pointerX - (sortableDragSession.grabOffsetX || 0);
+    const top = sortableDragSession.pointerY - (sortableDragSession.grabOffsetY || 0);
+    sortableCursorGhost.style.left = `${left}px`;
+    sortableCursorGhost.style.top = `${top}px`;
+}
+
+function createSortableCursorGhost(sourceEl) {
+    removeSortableCursorGhost();
+    if (!sourceEl) return;
+
+    const rect = sourceEl.getBoundingClientRect();
+    sortableCursorGhost = sourceEl.cloneNode(true);
+    sortableCursorGhost.classList.remove(
+        'sortable-ghost',
+        'sortable-chosen',
+        'sortable-drag',
+        'image-drag-picked',
+        'sortable-hover-target',
+        'drag-over-animated',
+        'image-drop-celebrate',
+        'is-reorder-animating',
+        'image-enter'
+    );
+    sortableCursorGhost.classList.add('sortable-cursor-ghost');
+
+    sortableCursorGhost.querySelectorAll('.drop-indicator').forEach((indicator) => {
+        indicator.remove();
+    });
+
+    sortableCursorGhost.style.position = 'fixed';
+    sortableCursorGhost.style.left = '0';
+    sortableCursorGhost.style.top = '0';
+    sortableCursorGhost.style.width = `${Math.round(rect.width)}px`;
+    sortableCursorGhost.style.maxWidth = `${Math.round(rect.width)}px`;
+    sortableCursorGhost.style.margin = '0';
+    sortableCursorGhost.style.pointerEvents = 'none';
+    sortableCursorGhost.style.zIndex = '100001';
+    document.body.appendChild(sortableCursorGhost);
+    updateSortableCursorGhostPosition();
+}
+
+function clearSortableHoverTarget() {
+    if (!sortableDragSession?.hoverTarget) return;
+    cleanupSortableVisualState(sortableDragSession.hoverTarget);
+    sortableDragSession.hoverTarget = null;
+}
+
+function setSortableHoverTarget(targetEl) {
+    if (!sortableDragSession) return;
+
+    const nextTarget = targetEl && targetEl !== sortableDragSession.draggedItem && targetEl.classList?.contains('image-box')
+        ? targetEl
+        : null;
+
+    if (sortableDragSession.hoverTarget === nextTarget) {
+        return;
+    }
+
+    clearSortableHoverTarget();
+
+    if (!nextTarget) {
+        return;
+    }
+
+    sortableDragSession.hoverTarget = nextTarget;
+    nextTarget.classList.add('sortable-hover-target');
+    const indicator = nextTarget.querySelector('.drop-indicator');
+    if (indicator) indicator.style.display = 'block';
+}
+
+function computeSortableAutoScrollDelta() {
+    if (!sortableDragSession?.active) return 0;
+
+    const pointerY = Number.isFinite(sortableDragSession.pointerY)
+        ? sortableDragSession.pointerY
+        : null;
+
+    if (!Number.isFinite(pointerY)) {
+        return 0;
+    }
+
+    const scrollMargin = 280;
+    const maxScrollSpeed = 52;
+    const topProbe = pointerY;
+    const bottomProbe = pointerY;
+
+    if (topProbe < scrollMargin) {
+        const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
+        return -Math.max(10, Math.round(maxScrollSpeed * intensity));
+    }
+
+    if (bottomProbe > window.innerHeight - scrollMargin) {
+        const intensity = Math.min(1, (bottomProbe - (window.innerHeight - scrollMargin)) / scrollMargin);
+        return Math.max(10, Math.round(maxScrollSpeed * intensity));
+    }
+
+    return 0;
+}
+
+function nudgeSortableWithSyntheticMove() {
+    if (!sortableDragSession) return;
+
+    const clientX = sortableDragSession.pointerX;
+    const clientY = sortableDragSession.pointerY;
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+        return;
+    }
+
+    try {
+        if (window.PointerEvent) {
+            document.dispatchEvent(new PointerEvent('pointermove', {
+                bubbles: true,
+                cancelable: true,
+                clientX,
+                clientY,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true
+            }));
+        }
+    } catch (_error) {
+        // Ignorar y usar mousemove.
+    }
+
+    try {
+        document.dispatchEvent(new MouseEvent('mousemove', {
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY,
+            view: window
+        }));
+    } catch (_error) {
+        // Ignorar.
+    }
+}
+
+function runSortableAutoScrollFrame() {
+    if (!sortableDragSession?.active) {
+        return;
+    }
+
+    const hoveredCard = document.elementFromPoint(
+        sortableDragSession.pointerX,
+        sortableDragSession.pointerY
+    )?.closest?.('.image-box');
+    setSortableHoverTarget(hoveredCard);
+
+    const scrollAmount = computeSortableAutoScrollDelta();
+    if (scrollAmount) {
+        window.scrollBy(0, scrollAmount);
+        nudgeSortableWithSyntheticMove();
+        updateSortableCursorGhostPosition();
+    }
+}
+
+function startSortableAutoScroll() {
+    if (!sortableDragSession || sortableDragSession.intervalId) return;
+    sortableDragSession.active = true;
+    runSortableAutoScrollFrame();
+    sortableDragSession.intervalId = window.setInterval(runSortableAutoScrollFrame, 16);
+}
+
+function stopSortableAutoScroll() {
+    if (!sortableDragSession?.intervalId) return;
+    window.clearInterval(sortableDragSession.intervalId);
+    sortableDragSession.intervalId = 0;
+}
+
+function handleSortableDocumentPointerMove(eventLike) {
+    updateSortableDragPointerFromEvent(eventLike);
+}
+
+function beginSortableDragSession(itemEl, originalEvent, grabOffsetX, grabOffsetY) {
+    sortableDragSession = {
+        active: false,
+        pointerX: NaN,
+        pointerY: NaN,
+        intervalId: 0,
+        draggedItem: itemEl,
+        hoverTarget: null,
+        startPositions: captureGridCardPositions(),
+        grabOffsetX,
+        grabOffsetY
+    };
+
+    updateSortableDragPointerFromEvent(originalEvent);
+    createSortableCursorGhost(itemEl);
+    document.addEventListener('pointermove', handleSortableDocumentPointerMove, true);
+    document.addEventListener('mousemove', handleSortableDocumentPointerMove, true);
+    document.addEventListener('touchmove', handleSortableDocumentPointerMove, true);
+    document.addEventListener('dragover', handleSortableDocumentPointerMove, true);
+    window.addEventListener('pointermove', handleSortableDocumentPointerMove, true);
+    window.addEventListener('mousemove', handleSortableDocumentPointerMove, true);
+    window.addEventListener('touchmove', handleSortableDocumentPointerMove, true);
+}
+
+function finishSortableDragSession() {
+    const finishedSession = sortableDragSession;
+    stopSortableAutoScroll();
+    clearSortableHoverTarget();
+    removeSortableCursorGhost();
+    document.removeEventListener('pointermove', handleSortableDocumentPointerMove, true);
+    document.removeEventListener('mousemove', handleSortableDocumentPointerMove, true);
+    document.removeEventListener('touchmove', handleSortableDocumentPointerMove, true);
+    document.removeEventListener('dragover', handleSortableDocumentPointerMove, true);
+    window.removeEventListener('pointermove', handleSortableDocumentPointerMove, true);
+    window.removeEventListener('mousemove', handleSortableDocumentPointerMove, true);
+    window.removeEventListener('touchmove', handleSortableDocumentPointerMove, true);
+    sortableDragSession = null;
+    return finishedSession;
+}
+
+function ensureImageGridSortable() {
+    if (!grid || typeof window.Sortable !== 'function') return;
+    if (imageGridSortable) return;
+
+    imageGridSortable = window.Sortable.create(grid, {
+        animation: 320,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        draggable: '.image-box',
+        ignore: 'a',
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 8,
+        fallbackOffset: { x: 0, y: 0 },
+        fallbackClass: 'sortable-fallback',
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+        scroll: false,
+        swapThreshold: 0.6,
+        invertSwap: true,
+        preventOnFilter: false,
+        filter: '.remove-image-btn, .image-loading-state',
+        onChoose(evt) {
+            const rect = evt.item.getBoundingClientRect();
+            const originalEvent = evt.originalEvent || {};
+            const pointerOffsetX = typeof originalEvent.clientX === 'number'
+                ? originalEvent.clientX - rect.left
+                : rect.width / 2;
+            const pointerOffsetY = typeof originalEvent.clientY === 'number'
+                ? originalEvent.clientY - rect.top
+                : rect.height / 2;
+
+            imageGridSortable.option('fallbackOffset', {
+                x: Math.round(pointerOffsetX - (rect.width / 2)),
+                y: Math.round(pointerOffsetY - (rect.height / 2))
+            });
+            sortablePendingPick = {
+                item: evt.item,
+                originalEvent: evt.originalEvent,
+                pointerOffsetX,
+                pointerOffsetY
+            };
+        },
+        onClone(evt) {
+            if (evt.clone) {
+                evt.clone.classList.add('image-drag-clone-card');
+            }
+        },
+        onStart(evt) {
+            isInternalDrag = true;
+            document.body.classList.add('image-reorder-active');
+            clearNativeSelection();
+
+            const pendingPick = sortablePendingPick && sortablePendingPick.item === evt.item
+                ? sortablePendingPick
+                : {
+                    item: evt.item,
+                    originalEvent: evt.originalEvent,
+                    pointerOffsetX: evt.item.offsetWidth / 2,
+                    pointerOffsetY: evt.item.offsetHeight / 2
+                };
+
+            beginSortableDragSession(
+                evt.item,
+                pendingPick.originalEvent || evt.originalEvent,
+                pendingPick.pointerOffsetX,
+                pendingPick.pointerOffsetY
+            );
+            evt.item.classList.add('image-drag-picked');
+            updateSortableDragPointerFromEvent(evt.originalEvent);
+            startSortableAutoScroll();
+        },
+        onMove(evt, originalEvent) {
+            updateSortableDragPointerFromEvent(originalEvent);
+            setSortableHoverTarget(evt.related);
+            return true;
+        },
+        onUnchoose(evt) {
+            sortablePendingPick = null;
+            cleanupSortableVisualState(evt.item);
+        },
+        onEnd(evt) {
+            const finishedDragSession = finishSortableDragSession();
+            document.body.classList.remove('image-reorder-active');
+            clearNativeSelection();
+            isInternalDrag = false;
+            sortablePendingPick = null;
+            imageGridSortable.option('fallbackOffset', { x: 0, y: 0 });
+
+            const oldIndex = Number(evt.oldIndex);
+            const newIndex = Number(evt.newIndex);
+            if (!Number.isInteger(oldIndex) || !Number.isInteger(newIndex) || oldIndex === newIndex) {
+                cleanupSortableVisualState(evt.item);
+                return;
+            }
+
+            pushUndoState('Reordenar imágenes');
+            const moved = imagesData.splice(oldIndex, 1)[0];
+            imagesData.splice(newIndex, 0, moved);
+            markSessionDirty(true);
+            dragClickSuppressUntil = Date.now() + 220;
+            suppressNextGridEnterAnimation = false;
+            pendingDropCelebrateIdx = null;
+            syncVisibleImageCardBindings();
+            animateGridReorderFrom(finishedDragSession?.startPositions, {
+                excludeUiId: evt.item.getAttribute('data-ui-id')
+            });
+            evt.item.classList.remove('sortable-chosen', 'sortable-ghost', 'sortable-drag');
+            evt.item.style.opacity = '1';
+            evt.item.style.visibility = 'visible';
+            cleanupSortableVisualState(evt.item);
+            requestAnimationFrame(() => {
+                triggerImageDropCelebrate(evt.item);
+                window.setTimeout(() => {
+                    evt.item.style.opacity = '';
+                    evt.item.style.visibility = '';
+                }, 900);
+            });
+        }
+    });
+}
+
 // --- Cropper: abrir desde miniatura ---
 window.showImageCropper = function(idx) {
     openCropper(idx);
 };
 
 let dragSrcIdx = null;
+let autoScrollFrame = null;
 let autoScrollInterval = null;
+let currentDragGhost = null;
+let pointerDragState = null;
+let dragHoverIdx = null;
+let dragClickSuppressUntil = 0;
+let suppressNextGridEnterAnimation = false;
+let pendingDropCelebrateIdx = null;
 
-function handleDragStart(e) {
-    dragSrcIdx = Number(this.getAttribute('data-index'));
-    this.style.opacity = '0.4';
-    // Activar auto-scroll
-    document.addEventListener('dragover', handleAutoScroll);
+function clearNativeSelection() {
+    try {
+        const selection = window.getSelection ? window.getSelection() : null;
+        if (selection && selection.rangeCount) {
+            selection.removeAllRanges();
+        }
+    } catch (_error) {
+        // Ignorar.
+    }
+}
+
+function clearDragIndicators() {
+    document.querySelectorAll('.image-box').forEach((box) => {
+        box.classList.remove('drag-over-animated', 'is-pointer-drag-source', 'is-reorder-animating');
+        box.style.transition = '';
+        box.style.transform = '';
+        const indicator = box.querySelector('.drop-indicator');
+        if (indicator) indicator.style.display = 'none';
+    });
+}
+
+function captureGridCardPositions() {
+    const positions = new Map();
+    document.querySelectorAll('.image-box[data-ui-id]').forEach((box) => {
+        positions.set(box.getAttribute('data-ui-id'), box.getBoundingClientRect());
+    });
+    return positions;
+}
+
+function animateGridReorderFrom(previousPositions = new Map(), options = {}) {
+    if (!previousPositions || !previousPositions.size) return;
+
+    const excludeUiId = options?.excludeUiId || null;
+
+    requestAnimationFrame(() => {
+        document.querySelectorAll('.image-box[data-ui-id]').forEach((box) => {
+            const uiId = box.getAttribute('data-ui-id');
+            if (excludeUiId && uiId === excludeUiId) return;
+            const previousRect = previousPositions.get(uiId);
+            if (!previousRect) return;
+
+            const nextRect = box.getBoundingClientRect();
+            const deltaX = previousRect.left - nextRect.left;
+            const deltaY = previousRect.top - nextRect.top;
+
+            if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+
+            box.classList.add('is-reorder-animating');
+            box.style.transition = 'none';
+            box.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(0.985)`;
+
+            requestAnimationFrame(() => {
+                box.style.transition = 'transform 460ms cubic-bezier(0.22, 1, 0.36, 1)';
+                box.style.transform = 'translate(0, 0) scale(1)';
+                box.addEventListener('transitionend', () => {
+                    box.classList.remove('is-reorder-animating');
+                    box.style.transition = '';
+                    box.style.transform = '';
+                }, { once: true });
+            });
+        });
+    });
+}
+
+function removeCurrentDragGhost() {
+    if (!currentDragGhost) return;
+    currentDragGhost.remove();
+    currentDragGhost = null;
+}
+
+function updateCurrentDragGhostPosition(clientX, clientY) {
+    if (!currentDragGhost) return;
+    currentDragGhost.style.left = `${clientX}px`;
+    currentDragGhost.style.top = `${clientY}px`;
+}
+
+function getViewportScrollState() {
+    const scrollTop = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    const scrollHeight = Math.max(
+        document.documentElement.scrollHeight || 0,
+        document.body.scrollHeight || 0,
+        document.documentElement.offsetHeight || 0,
+        document.body.offsetHeight || 0
+    );
+
+    return {
+        scrollTop,
+        maxScrollTop: Math.max(0, scrollHeight - window.innerHeight)
+    };
+}
+
+function computePointerDragScrollDelta() {
+    const ghostRect = currentDragGhost?.getBoundingClientRect?.();
+    if (!ghostRect) return 0;
+
+    const scrollMargin = 210;
+    const maxScrollSpeed = 38;
+    const pointerY = pointerDragState?.lastClientY ?? ((ghostRect.top + ghostRect.bottom) / 2);
+    const topProbe = Math.min(ghostRect.top, pointerY);
+    const bottomProbe = Math.max(ghostRect.bottom, pointerY);
+
+    if (topProbe < scrollMargin) {
+        const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
+        return -Math.max(10, Math.round(maxScrollSpeed * intensity));
+    }
+
+    if (bottomProbe > window.innerHeight - scrollMargin) {
+        const intensity = Math.min(1, (bottomProbe - (window.innerHeight - scrollMargin)) / scrollMargin);
+        return Math.max(10, Math.round(maxScrollSpeed * intensity));
+    }
+
+    return 0;
+}
+
+function stopPointerDragAutoScroll() {
+    if (!autoScrollFrame) return;
+    cancelAnimationFrame(autoScrollFrame);
+    autoScrollFrame = null;
+}
+
+function resolveDropTargetIndex(clientX, clientY) {
+    const hoveredCard = document.elementFromPoint(clientX, clientY)?.closest('.image-box');
+    if (hoveredCard && !hoveredCard.classList.contains('is-pointer-drag-source')) {
+        const hoveredIdx = Number(hoveredCard.getAttribute('data-index'));
+        if (Number.isInteger(hoveredIdx)) {
+            return hoveredIdx;
+        }
+    }
+
+    const cards = Array.from(document.querySelectorAll('.image-box')).filter((box) => !box.classList.contains('is-pointer-drag-source'));
+    let nearestIdx = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    cards.forEach((box) => {
+        const rect = box.getBoundingClientRect();
+        const boxCenterX = rect.left + (rect.width / 2);
+        const boxCenterY = rect.top + (rect.height / 2);
+        const distance = Math.hypot(clientX - boxCenterX, clientY - boxCenterY);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIdx = Number(box.getAttribute('data-index'));
+        }
+    });
+
+    return Number.isInteger(nearestIdx) ? nearestIdx : null;
+}
+
+function setDragHoverTarget(targetIdx) {
+    dragHoverIdx = Number.isInteger(targetIdx) ? targetIdx : null;
+    document.querySelectorAll('.image-box').forEach((box) => {
+        const boxIdx = Number(box.getAttribute('data-index'));
+        const indicator = box.querySelector('.drop-indicator');
+        const isHoverTarget = dragHoverIdx !== null && boxIdx === dragHoverIdx && boxIdx !== dragSrcIdx;
+        box.classList.toggle('drag-over-animated', isHoverTarget);
+        if (indicator) indicator.style.display = isHoverTarget ? 'block' : 'none';
+    });
+}
+
+function syncPointerDragVisuals() {
+    if (!pointerDragState?.dragging) return;
+    updateCurrentDragGhostPosition(pointerDragState.lastClientX, pointerDragState.lastClientY);
+    setDragHoverTarget(resolveDropTargetIndex(pointerDragState.lastClientX, pointerDragState.lastClientY));
+}
+
+function stopPointerDragAutoScroll() {
+    if (autoScrollFrame) {
+        cancelAnimationFrame(autoScrollFrame);
+        autoScrollFrame = null;
+    }
+    if (autoScrollInterval) {
+        clearInterval(autoScrollInterval);
+        autoScrollInterval = null;
+    }
+}
+
+function runPointerDragAutoScroll() {
+    if (!pointerDragState?.dragging) {
+        stopPointerDragAutoScroll();
+        return;
+    }
+
+    const clientY = pointerDragState.lastClientY;
+    const scrollMargin = 100; // Zona para trigger de scroll
+    const viewportHeight = window.innerHeight;
+    const { scrollTop, maxScrollTop } = getViewportScrollState();
+    
+    // Obtener posición de la card que estamos arrastrando
+    let ghostBounds = null;
+    if (currentDragGhost) {
+        ghostBounds = currentDragGhost.getBoundingClientRect();
+    }
+    
+    let scrollAmount = 0;
+
+    // Chequear BORDE SUPERIOR: cursor o card cerca del top
+    const topProbe = ghostBounds ? Math.min(clientY, ghostBounds.top) : clientY;
+    if (topProbe < scrollMargin) {
+        const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
+        scrollAmount = -Math.max(12, Math.round(35 * intensity));
+    }
+    
+    // Chequear BORDE INFERIOR: cursor o card cerca del bottom
+    const bottomProbe = ghostBounds ? Math.max(clientY, ghostBounds.bottom) : clientY;
+    if (bottomProbe > viewportHeight - scrollMargin) {
+        const intensity = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
+        scrollAmount = Math.max(12, Math.round(35 * intensity));
+    }
+
+    // Si hay que hacer scroll y no estamos en los límites
+    if (scrollAmount !== 0) {
+        if ((scrollAmount < 0 && scrollTop > 0) || (scrollAmount > 0 && scrollTop < maxScrollTop)) {
+            window.scrollBy(0, scrollAmount);
+        }
+    }
+}
+
+function startPointerDragAutoScroll() {
+    // Si ya existe el intervalo, no lo recreamos, solo dejamos que siga
+    if (autoScrollInterval) return;
+    autoScrollInterval = setInterval(runPointerDragAutoScroll, 30);
+}
+
+function finishPointerDrag() {
+    if (pointerDragState?.sourceEl) {
+        pointerDragState.sourceEl.classList.remove('is-pointer-drag-source');
+    }
+
+    removeCurrentDragGhost();
+    clearDragIndicators();
+    stopPointerDragAutoScroll();
+
+    document.body.classList.remove('image-reorder-active');
+    document.body.classList.remove('image-reorder-armed');
+    document.removeEventListener('pointermove', handlePointerDragMove, true);
+    document.removeEventListener('pointerup', handlePointerDragEnd, true);
+    document.removeEventListener('pointercancel', handlePointerDragEnd, true);
+    clearNativeSelection();
+
+    if (pointerDragState?.sourceEl?.releasePointerCapture && pointerDragState.sourceEl.hasPointerCapture?.(pointerDragState.pointerId)) {
+        pointerDragState.sourceEl.releasePointerCapture(pointerDragState.pointerId);
+    }
+
+    pointerDragState = null;
+    dragHoverIdx = null;
+    dragSrcIdx = null;
+    isInternalDrag = false;
+}
+
+function beginPointerDrag() {
+    if (!pointerDragState || pointerDragState.dragging) return;
+
+    pointerDragState.dragging = true;
+    dragSrcIdx = pointerDragState.index;
+    isInternalDrag = true;
+    document.body.classList.add('image-reorder-active');
+    clearNativeSelection();
+    pointerDragState.sourceEl.classList.add('is-pointer-drag-source');
+
+    if (pointerDragState.sourceEl.setPointerCapture) {
+        pointerDragState.sourceEl.setPointerCapture(pointerDragState.pointerId);
+    }
+
+    const rect = pointerDragState.sourceEl.getBoundingClientRect();
+    currentDragGhost = pointerDragState.sourceEl.cloneNode(true);
+    currentDragGhost.classList.remove('is-pointer-drag-source', 'drag-over-animated', 'image-enter', 'image-drop-celebrate', 'is-reorder-animating');
+    currentDragGhost.classList.add('pointer-drag-ghost');
+    currentDragGhost.style.position = 'fixed';
+    currentDragGhost.style.left = '0';
+    currentDragGhost.style.top = '0';
+    currentDragGhost.style.width = `${Math.round(rect.width)}px`;
+    currentDragGhost.style.maxWidth = `${Math.round(rect.width)}px`;
+    currentDragGhost.style.margin = '0';
+    currentDragGhost.style.opacity = '1';
+    currentDragGhost.style.pointerEvents = 'none';
+    currentDragGhost.style.zIndex = '100000';
+    currentDragGhost.style.transform = 'translate(-50%, -50%) rotate(-0.5deg) scale(0.98)';
+    currentDragGhost.style.boxShadow = '0 30px 60px rgba(15, 23, 42, 0.3)';
+    document.body.appendChild(currentDragGhost);
+
+    syncPointerDragVisuals();
+    startPointerDragAutoScroll();
+}
+
+function handlePointerDragStartIntent(e) {
+    if (e.pointerType === 'touch') return;
+    if (e.button !== 0) return;
+
+    const loadingTarget = e.target.closest && e.target.closest('.image-loading-state');
+    if (loadingTarget) return;
+
+    document.body.classList.add('image-reorder-armed');
+    clearNativeSelection();
+
+    let dragThreshold = 8;
+    if (e.target.closest && e.target.closest('textarea')) {
+        dragThreshold = 18;
+    } else if (e.target.closest && e.target.closest('select, input')) {
+        dragThreshold = 16;
+    } else if (e.target.closest && e.target.closest('button')) {
+        dragThreshold = 14;
+    } else if (e.target.closest && e.target.closest('.img-cropper-trigger')) {
+        dragThreshold = 8;
+    }
+
+    pointerDragState = {
+        pointerId: e.pointerId,
+        sourceEl: this,
+        index: Number(this.getAttribute('data-index')),
+        startX: e.clientX,
+        startY: e.clientY,
+        lastClientX: e.clientX,
+        lastClientY: e.clientY,
+        dragThreshold,
+        dragging: false
+    };
+
+    document.addEventListener('pointermove', handlePointerDragMove, true);
+    document.addEventListener('pointerup', handlePointerDragEnd, true);
+    document.addEventListener('pointercancel', handlePointerDragEnd, true);
+}
+
+function handlePointerDragMove(e) {
+    if (!pointerDragState || e.pointerId !== pointerDragState.pointerId) return;
+
+    pointerDragState.lastClientX = e.clientX;
+    pointerDragState.lastClientY = e.clientY;
+
+    if (!pointerDragState.dragging) {
+        const movedEnough = Math.hypot(e.clientX - pointerDragState.startX, e.clientY - pointerDragState.startY) >= pointerDragState.dragThreshold;
+        if (!movedEnough) return;
+        beginPointerDrag();
+    }
+
+    e.preventDefault();
+    clearNativeSelection();
+    syncPointerDragVisuals();
+    startPointerDragAutoScroll();
+}
+
+function handlePointerDragEnd(e) {
+    if (!pointerDragState || e.pointerId !== pointerDragState.pointerId) return;
+
+    const shouldReorder = pointerDragState.dragging && dragHoverIdx !== null && dragHoverIdx !== dragSrcIdx;
+    if (shouldReorder) {
+        const previousPositions = captureGridCardPositions();
+        pushUndoState('Reordenar imágenes');
+        const moved = imagesData.splice(dragSrcIdx, 1)[0];
+        imagesData.splice(dragHoverIdx, 0, moved);
+        markSessionDirty(true);
+        dragClickSuppressUntil = Date.now() + 250;
+        suppressNextGridEnterAnimation = true;
+        pendingDropCelebrateIdx = ensureImageUiId(moved);
+        finishPointerDrag();
+        renderGrid();
+        animateGridReorderFrom(previousPositions);
+        return;
+    }
+
+    if (pointerDragState.dragging) {
+        dragClickSuppressUntil = Date.now() + 120;
+    }
+
+    finishPointerDrag();
 }
 
 function handleDragOver(e) {
+    const transferTypes = Array.from(e.dataTransfer?.types || []);
+    if (isInternalDrag || !transferTypes.includes('Files')) {
+        return;
+    }
+
     e.preventDefault();
     this.classList.add('drag-over-animated');
     // Mostrar indicador visual
@@ -2232,68 +3074,15 @@ function handleDragOver(e) {
 }
 
 function handleDragLeave(e) {
+    const transferTypes = Array.from(e.dataTransfer?.types || []);
+    if (isInternalDrag || !transferTypes.includes('Files')) {
+        return;
+    }
+
     this.classList.remove('drag-over-animated');
     const indicator = this.querySelector('.drop-indicator');
     if (indicator) {
         indicator.style.display = 'none';
-    }
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    this.classList.remove('drag-over-animated');
-    const indicator = this.querySelector('.drop-indicator');
-    if (indicator) {
-        indicator.style.display = 'none';
-    }
-    const targetIdx = Number(this.getAttribute('data-index'));
-    if (dragSrcIdx !== null && dragSrcIdx !== targetIdx) {
-        const moved = imagesData.splice(dragSrcIdx, 1)[0];
-        imagesData.splice(targetIdx, 0, moved);
-        renderGrid();
-    }
-}
-
-function handleDragEnd(e) {
-    this.style.opacity = '';
-    document.querySelectorAll('.image-box').forEach(box => {
-        box.style.border = '2px solid #ecf0f1';
-        box.classList.remove('drag-over-animated');
-        const indicator = box.querySelector('.drop-indicator');
-        if (indicator) indicator.style.display = 'none';
-    });
-    dragSrcIdx = null;
-    // Desactivar auto-scroll
-    document.removeEventListener('dragover', handleAutoScroll);
-    clearInterval(autoScrollInterval);
-    autoScrollInterval = null;
-}
-
-function handleAutoScroll(e) {
-    const scrollMargin = 60; // px desde el borde
-    const scrollSpeed = 18; // px por frame
-    const y = e.clientY;
-    const winHeight = window.innerHeight;
-    if (y < scrollMargin) {
-        // Scroll up
-        if (!autoScrollInterval) {
-            autoScrollInterval = setInterval(() => {
-                window.scrollBy(0, -scrollSpeed);
-            }, 16);
-        }
-    } else if (y > winHeight - scrollMargin) {
-        // Scroll down
-        if (!autoScrollInterval) {
-            autoScrollInterval = setInterval(() => {
-                window.scrollBy(0, scrollSpeed);
-            }, 16);
-        }
-    } else {
-        // Stop scrolling
-        if (autoScrollInterval) {
-            clearInterval(autoScrollInterval);
-            autoScrollInterval = null;
-        }
     }
 }
 

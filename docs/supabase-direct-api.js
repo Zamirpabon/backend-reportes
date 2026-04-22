@@ -861,4 +861,42 @@
       }
     }
   };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 💓 HEARTBEAT AUTOMÁTICO PARA SUPABASE FREE
+  // ═══════════════════════════════════════════════════════════════
+  // Ejecuta una query ligera cada 10 minutos para evitar que Supabase
+  // Free pause el proyecto por inactividad
+  // ═══════════════════════════════════════════════════════════════
+
+  async function performHeartbeat() {
+    try {
+      const client = getClient();
+      // Query simple: contar sesiones (muy ligera, sin aggregate function)
+      const { error } = await client
+        .from('sessions')
+        .select('id', { count: 'exact', head: true })
+        .limit(1);
+
+      if (!error) {
+        console.log('[backend-reportes] ❤️ Heartbeat exitoso', new Date().toISOString());
+      } else {
+        console.warn('[backend-reportes] Heartbeat con error:', error.message);
+      }
+    } catch (err) {
+      console.warn('[backend-reportes] Heartbeat falló:', err.message);
+    }
+  }
+
+  // Ejecutar heartbeat al cargar
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      performHeartbeat();
+      // Luego cada 10 minutos (600000 ms)
+      setInterval(performHeartbeat, 10 * 60 * 1000);
+    });
+  } else {
+    performHeartbeat();
+    setInterval(performHeartbeat, 10 * 60 * 1000);
+  }
 })();

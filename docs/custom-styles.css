@@ -1482,8 +1482,40 @@ html {
   overflow: visible;
 }
 
+.image-box.is-reorder-animating {
+  will-change: transform;
+  z-index: 5;
+}
+
 .image-box.image-enter {
   animation: image-enter 260ms ease-out;
+}
+
+.image-box.image-drop-celebrate {
+  z-index: 8;
+  animation:
+    image-drop-shadow 860ms cubic-bezier(0.22, 1, 0.36, 1),
+    image-drop-settle 860ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.image-box.image-drop-celebrate::after {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border-radius: 28px;
+  pointer-events: none;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 0 0 0 rgba(255, 255, 255, 0.8),
+    0 0 0 0 rgba(74, 144, 226, 0.18),
+    0 24px 44px rgba(37, 99, 235, 0.18);
+  opacity: 0;
+  animation: image-drop-ring 860ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.image-box.is-reorder-animating {
+  z-index: 6;
+  will-change: transform;
 }
 
 .image-container {
@@ -1522,6 +1554,11 @@ html {
 
 .img-cropper-trigger.is-loading {
   opacity: 0;
+}
+
+.img-cropper-trigger {
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .image-pencil-loader {
@@ -1579,6 +1616,56 @@ html {
 @keyframes image-enter {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes image-drop-shadow {
+  0% {
+    box-shadow:
+      0 40px 62px rgba(39, 94, 254, 0.32),
+      0 0 0 0 rgba(255, 255, 255, 0.24);
+  }
+  38% {
+    box-shadow:
+      0 28px 44px rgba(39, 94, 254, 0.22),
+      0 0 0 12px rgba(255, 255, 255, 0.11);
+  }
+  100% {
+    box-shadow:
+      0 12px 28px rgba(15, 23, 42, 0.12),
+      0 0 0 0 rgba(255, 255, 255, 0);
+  }
+}
+
+@keyframes image-drop-ring {
+  0% {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  16% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
+@keyframes image-drop-settle {
+  0% {
+    transform: translateY(-18px) scale(1.065) rotate(-1deg);
+  }
+  34% {
+    transform: translateY(6px) scale(0.978) rotate(0.38deg);
+  }
+  58% {
+    transform: translateY(-5px) scale(1.02) rotate(-0.2deg);
+  }
+  78% {
+    transform: translateY(2px) scale(0.994) rotate(0.08deg);
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0);
+  }
 }
 
 @keyframes tap-upper-1 {
