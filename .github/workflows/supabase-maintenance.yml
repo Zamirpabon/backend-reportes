@@ -1,0 +1,64 @@
+name: Supabase Maintenance
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate configuration
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          MAINTENANCE_KEY: ${{ secrets.MAINTENANCE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -n "$BACKEND_URL" ]; then
+            if [ -z "$MAINTENANCE_KEY" ]; then
+              echo "Missing MAINTENANCE_KEY secret for backend mode"
+              exit 1
+            fi
+            echo "Using backend maintenance mode"
+            exit 0
+          fi
+
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "Missing SUPABASE_URL secret for direct Supabase mode"
+            exit 1
+          fi
+
+          if [ -z "$SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "Missing SUPABASE_PUBLISHABLE_KEY secret for direct Supabase mode"
+            exit 1
+          fi
+
+          echo "Using direct Supabase mode"
+
+      - name: Run heartbeat through backend
+        if: ${{ secrets.BACKEND_URL != '' }}
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          MAINTENANCE_KEY: ${{ secrets.MAINTENANCE_KEY }}
+        run: |
+          curl --fail --show-error --silent \
+            --retry 3 \
+            --retry-delay 5 \
+            --max-time 60 \
+            "${BACKEND_URL%/}/maintenance?key=${MAINTENANCE_KEY}"
+
+      - name: Run heartbeat directly against Supabase
+        if: ${{ secrets.BACKEND_URL == '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          curl --fail --show-error --silent \
+            --retry 3 \
+            --retry-delay 5 \
+            --max-time 60 \
+            -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_PUBLISHABLE_KEY}" \
+            "${SUPABASE_URL%/}/rest/v1/sessions?select=id&limit=1"
