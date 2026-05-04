@@ -65,6 +65,7 @@ let latestStorageUsage = null;
 const loadedImagePreviewSources = new Set();
 const MAX_UNDO_STATES = 25;
 const MAX_BACKGROUND_LOOSE_UPLOADS = 3;
+const MOBILE_SORT_HOLD_DELAY_MS = 120;
 const pendingLooseUploadQueue = [];
 const canceledLooseUploadDraftIds = new Set();
 const pendingImageDeletions = new Map();
@@ -75,6 +76,7 @@ let looseUploadCompletedCount = 0;
 let uploadLoaderDisplayCount = 0;
 let uploadLoaderDisplayTimer = null;
 let imageGridSortable = null;
+let floatingScrollControls = null;
 
 // Agregar input para número inicial de imagen
 let imageStartNumber = 1;
@@ -144,6 +146,130 @@ function showToast(message, type = 'info') {
     toastContainer.appendChild(toast);
     setTimeout(removeToast, 3000);
 }
+
+let smoothAnchorScrollFrame = null;
+
+function easeInOutCubic(t) {
+    if (t < 0.5) {
+        return 4 * t * t * t;
+    }
+    return 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function getScrollAnimationDuration(distance) {
+    const normalizedDistance = Math.abs(distance);
+    return Math.max(550, Math.min(1250, 520 + (normalizedDistance * 0.18)));
+}
+
+function animateWindowScrollTo(targetTop, duration) {
+    const startTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    const pageHeight = Math.max(
+        document.documentElement.scrollHeight || 0,
+        document.body.scrollHeight || 0
+    );
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const clampedTarget = Math.max(0, Math.min(targetTop, Math.max(0, pageHeight - viewportHeight)));
+    const distance = clampedTarget - startTop;
+    const animationDuration = duration ?? getScrollAnimationDuration(distance);
+
+    if (smoothAnchorScrollFrame) {
+        cancelAnimationFrame(smoothAnchorScrollFrame);
+        smoothAnchorScrollFrame = null;
+    }
+
+    if (Math.abs(distance) < 2) {
+        window.scrollTo(0, clampedTarget);
+        return;
+    }
+
+    const startedAt = performance.now();
+
+    const step = (now) => {
+        const elapsed = now - startedAt;
+        const progress = Math.min(1, elapsed / animationDuration);
+        const eased = easeInOutCubic(progress);
+        const nextTop = startTop + (distance * eased);
+        window.scrollTo(0, nextTop);
+
+        if (progress < 1) {
+            smoothAnchorScrollFrame = requestAnimationFrame(step);
+        } else {
+            window.scrollTo(0, clampedTarget);
+            smoothAnchorScrollFrame = null;
+        }
+    };
+
+    smoothAnchorScrollFrame = requestAnimationFrame(step);
+}
+
+function scrollToImageAnchor(position = 'top') {
+    const pageHeight = Math.max(
+        document.documentElement.scrollHeight || 0,
+        document.body.scrollHeight || 0
+    );
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const maxScrollTop = Math.max(0, pageHeight - viewportHeight);
+    let targetTop = 0;
+
+    if (position === 'bottom') {
+        targetTop = maxScrollTop;
+    } else if (position === 'middle') {
+        targetTop = maxScrollTop / 2;
+    }
+
+    animateWindowScrollTo(targetTop);
+}
+
+function updateScrollControlState() {
+    if (!floatingScrollControls) return;
+    const pageHeight = Math.max(
+        document.documentElement.scrollHeight || 0,
+        document.body.scrollHeight || 0
+    );
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const canScrollPage = pageHeight > viewportHeight + 8;
+    floatingScrollControls.classList.toggle('is-empty', !canScrollPage);
+    floatingScrollControls.querySelectorAll('button').forEach((button) => {
+        button.disabled = !canScrollPage;
+    });
+}
+
+function ensureFloatingScrollControls() {
+    if (floatingScrollControls || !document.body) return;
+
+    const controls = document.createElement('div');
+    controls.className = 'floating-scroll-controls';
+    controls.setAttribute('aria-label', 'Navegación rápida de fotos');
+    controls.innerHTML = `
+        <button type="button" class="floating-scroll-btn" data-scroll-target="top" title="Ir a la primera foto" aria-label="Ir a la primera foto">
+            ↑
+        </button>
+        <button type="button" class="floating-scroll-btn floating-scroll-btn-middle" data-scroll-target="middle" title="Ir a la mitad de las fotos" aria-label="Ir a la mitad de las fotos">
+            •
+        </button>
+        <button type="button" class="floating-scroll-btn" data-scroll-target="bottom" title="Ir a la última foto" aria-label="Ir a la última foto">
+            ↓
+        </button>
+    `;
+
+    controls.querySelectorAll('button[data-scroll-target]').forEach((button) => {
+        button.addEventListener('click', () => {
+            if (button.disabled) return;
+            scrollToImageAnchor(button.getAttribute('data-scroll-target'));
+        });
+    });
+
+    document.body.appendChild(controls);
+    floatingScrollControls = controls;
+    updateScrollControlState();
+
+    window.addEventListener('resize', updateScrollControlState);
+    window.addEventListener('scroll', updateScrollControlState);
+}
+
+window.scrollToImageAnchor = scrollToImageAnchor;
+window.animateWindowScrollTo = animateWindowScrollTo;
+window.updateScrollBtns = updateScrollControlState;
 
 function showAppLoader(message = 'Cargando sesión...') {
     if (!appLoaderOverlay) return;
@@ -1022,6 +1148,7 @@ async function initializeApp() {
     if (appInitialized) return;
     appInitialized = true;
     try {
+        ensureFloatingScrollControls();
         updateImageCounter();
         addSessionControls();
         setupSessionDropdownMenu();
@@ -2050,6 +2177,7 @@ function renderGrid() {
         updateImageCounter();
         suppressNextGridEnterAnimation = false;
         ensureImageGridSortable();
+        updateScrollControlState();
         if (typeof window.updateScrollBtns === 'function') {
             setTimeout(() => window.updateScrollBtns(), 0);
         }
@@ -2068,6 +2196,7 @@ function renderGrid() {
     if (window.quickStateMode) {
         applyQuickStateHandlers();
     }
+    updateScrollControlState();
     if (typeof window.updateScrollBtns === 'function') {
         setTimeout(() => window.updateScrollBtns(), 0);
     }
@@ -2082,11 +2211,6 @@ function createImageBox(imageData, idx) {
     div.className = `image-box ${enterClass} ${dropCelebrateClass} ${getCardStatusClass(imageData.status)}`.trim();
     div.setAttribute('data-index', idx);
     div.setAttribute('data-ui-id', imageUiId);
-    if (!window.Sortable) {
-        div.addEventListener('pointerdown', function(e) {
-            handlePointerDragStartIntent.call(this, e);
-        });
-    }
     div.addEventListener('dragover', handleDragOver);
     div.addEventListener('dragleave', handleDragLeave);
     div.addEventListener('drop', function(e) {
@@ -2135,6 +2259,11 @@ function createImageBox(imageData, idx) {
     const shouldShowImageLoader = isPendingUpload && !!displaySource && !loadedImagePreviewSources.has(displaySource);
     div.innerHTML = `
     <button class="remove-image-btn" title="Eliminar imagen" onclick="removeImage(${idx}, event)">×</button>
+    <button class="image-reorder-handle" type="button" title="Mantén oprimido para mover esta foto" aria-label="Mantén oprimido para mover esta foto">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9 5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3Zm6 0a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3ZM9 10.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3Zm6 0a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3ZM9 16a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3Zm6 0a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3Z" fill="currentColor"></path>
+        </svg>
+    </button>
     <div class="image-container ${shouldShowImageLoader ? 'image-container-loading' : ''}" style="position:relative;">
         <div class="image-loading-state ${shouldShowImageLoader ? '' : 'is-hidden'}" aria-hidden="true">
             <svg xmlns="http://www.w3.org/2000/svg" height="200" width="200" viewBox="0 0 200 200" class="image-pencil-loader">
@@ -2188,7 +2317,15 @@ function createImageBox(imageData, idx) {
     const previewImg = div.querySelector('.img-cropper-trigger');
     const imageContainer = div.querySelector('.image-container');
     const imageLoader = div.querySelector('.image-loading-state');
+    const reorderHandle = div.querySelector('.image-reorder-handle');
     const imageLoaderStartedAt = Date.now();
+    if (reorderHandle) {
+        reorderHandle.addEventListener('pointerdown', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            handlePointerDragStartIntent.call(div, e);
+        });
+    }
     const finishPreviewLoad = () => {
         const elapsed = Date.now() - imageLoaderStartedAt;
         const remaining = Math.max(0, 5000 - elapsed);
@@ -2312,6 +2449,7 @@ function cleanupSortableVisualState(cardEl) {
 let sortableDragSession = null;
 let sortableCursorGhost = null;
 let sortablePendingPick = null;
+let sortableAutoScrollTicking = false;
 
 function updateSortableDragPointerFromEvent(eventLike) {
     if (!sortableDragSession || !eventLike) return;
@@ -2347,6 +2485,66 @@ function updateSortableCursorGhostPosition() {
     const top = sortableDragSession.pointerY - (sortableDragSession.grabOffsetY || 0);
     sortableCursorGhost.style.left = `${left}px`;
     sortableCursorGhost.style.top = `${top}px`;
+}
+
+function getPageScrollElement() {
+    return document.scrollingElement || document.documentElement || document.body;
+}
+
+function getActiveScrollContainer() {
+    let node = grid;
+
+    while (node && node !== document.body && node !== document.documentElement) {
+        const style = window.getComputedStyle(node);
+        const overflowY = style?.overflowY || style?.overflow || '';
+        const canScroll = /(auto|scroll|overlay)/i.test(overflowY) && node.scrollHeight > node.clientHeight + 4;
+        if (canScroll) {
+            return node;
+        }
+        node = node.parentElement;
+    }
+
+    return getPageScrollElement();
+}
+
+function scrollPageBy(deltaY) {
+    const primaryScrollEl = getActiveScrollContainer();
+    if (!primaryScrollEl || !Number.isFinite(deltaY) || deltaY === 0) {
+        return 0;
+    }
+
+    const candidates = [
+        primaryScrollEl,
+        document.scrollingElement,
+        document.documentElement,
+        document.body
+    ].filter(Boolean).filter((node, index, list) => list.indexOf(node) === index);
+
+    let appliedDelta = 0;
+
+    candidates.forEach((scrollEl) => {
+        const viewportHeight = scrollEl.clientHeight || window.innerHeight || document.documentElement.clientHeight || 0;
+        const maxScrollTop = Math.max(0, (scrollEl.scrollHeight || 0) - viewportHeight);
+        const currentScrollTop = scrollEl.scrollTop || 0;
+        const nextScrollTop = Math.min(maxScrollTop, Math.max(0, currentScrollTop + deltaY));
+
+        if (nextScrollTop === currentScrollTop) {
+            return;
+        }
+
+        scrollEl.scrollTop = nextScrollTop;
+        appliedDelta = Math.max(appliedDelta, Math.abs(nextScrollTop - currentScrollTop)) * Math.sign(deltaY);
+    });
+
+    if (appliedDelta !== 0 && typeof window.scrollTo === 'function') {
+        const globalTop = document.scrollingElement?.scrollTop
+            || document.documentElement.scrollTop
+            || document.body.scrollTop
+            || 0;
+        window.scrollTo(0, globalTop);
+    }
+
+    return appliedDelta;
 }
 
 function createSortableCursorGhost(sourceEl) {
@@ -2416,27 +2614,27 @@ function setSortableHoverTarget(targetEl) {
 function computeSortableAutoScrollDelta() {
     if (!sortableDragSession?.active) return 0;
 
-    const pointerY = Number.isFinite(sortableDragSession.pointerY)
-        ? sortableDragSession.pointerY
-        : null;
+    const ghostRect = sortableCursorGhost?.getBoundingClientRect?.() || getSortableFallbackGhostRect();
+    const pointerY = Number.isFinite(sortableDragSession.pointerY) ? sortableDragSession.pointerY : null;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
 
-    if (!Number.isFinite(pointerY)) {
+    if (!ghostRect && !Number.isFinite(pointerY)) {
         return 0;
     }
 
-    const scrollMargin = 280;
-    const maxScrollSpeed = 52;
-    const topProbe = pointerY;
-    const bottomProbe = pointerY;
+    const scrollMargin = 180;
+    const maxScrollSpeed = 48;
+    const topProbe = ghostRect ? ghostRect.top : pointerY;
+    const bottomProbe = ghostRect ? ghostRect.bottom : pointerY;
 
     if (topProbe < scrollMargin) {
         const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
-        return -Math.max(10, Math.round(maxScrollSpeed * intensity));
+        return -Math.max(12, Math.round(maxScrollSpeed * intensity));
     }
 
-    if (bottomProbe > window.innerHeight - scrollMargin) {
-        const intensity = Math.min(1, (bottomProbe - (window.innerHeight - scrollMargin)) / scrollMargin);
-        return Math.max(10, Math.round(maxScrollSpeed * intensity));
+    if (bottomProbe > viewportHeight - scrollMargin) {
+        const intensity = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
+        return Math.max(12, Math.round(maxScrollSpeed * intensity));
     }
 
     return 0;
@@ -2481,21 +2679,37 @@ function nudgeSortableWithSyntheticMove() {
 }
 
 function runSortableAutoScrollFrame() {
-    if (!sortableDragSession?.active) {
+    if (sortableAutoScrollTicking || !sortableDragSession?.active) {
         return;
     }
 
-    const hoveredCard = document.elementFromPoint(
-        sortableDragSession.pointerX,
-        sortableDragSession.pointerY
-    )?.closest?.('.image-box');
-    setSortableHoverTarget(hoveredCard);
+    sortableAutoScrollTicking = true;
+    try {
+        const probeX = Math.min(
+            Math.max(12, sortableDragSession.pointerX || 0),
+            Math.max(12, window.innerWidth - 12)
+        );
+        const probeY = Math.min(
+            Math.max(12, sortableDragSession.pointerY || 0),
+            Math.max(12, window.innerHeight - 12)
+        );
 
-    const scrollAmount = computeSortableAutoScrollDelta();
-    if (scrollAmount) {
-        window.scrollBy(0, scrollAmount);
-        nudgeSortableWithSyntheticMove();
-        updateSortableCursorGhostPosition();
+        const hoveredCard = document.elementFromPoint(
+            probeX,
+            probeY
+        )?.closest?.('.image-box');
+        setSortableHoverTarget(hoveredCard);
+
+        const scrollAmount = computeSortableAutoScrollDelta();
+        if (scrollAmount) {
+            const appliedScroll = scrollPageBy(scrollAmount);
+            if (appliedScroll !== 0) {
+                nudgeSortableWithSyntheticMove();
+                updateSortableCursorGhostPosition();
+            }
+        }
+    } finally {
+        sortableAutoScrollTicking = false;
     }
 }
 
@@ -2514,6 +2728,7 @@ function stopSortableAutoScroll() {
 
 function handleSortableDocumentPointerMove(eventLike) {
     updateSortableDragPointerFromEvent(eventLike);
+    runSortableAutoScrollFrame();
 }
 
 function beginSortableDragSession(itemEl, originalEvent, grabOffsetX, grabOffsetY) {
@@ -2557,125 +2772,7 @@ function finishSortableDragSession() {
 }
 
 function ensureImageGridSortable() {
-    if (!grid || typeof window.Sortable !== 'function') return;
-    if (imageGridSortable) return;
-
-    imageGridSortable = window.Sortable.create(grid, {
-        animation: 320,
-        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        draggable: '.image-box',
-        ignore: 'a',
-        forceFallback: true,
-        fallbackOnBody: true,
-        fallbackTolerance: 8,
-        fallbackOffset: { x: 0, y: 0 },
-        fallbackClass: 'sortable-fallback',
-        ghostClass: 'sortable-ghost',
-        chosenClass: 'sortable-chosen',
-        dragClass: 'sortable-drag',
-        scroll: false,
-        swapThreshold: 0.6,
-        invertSwap: true,
-        preventOnFilter: false,
-        filter: '.remove-image-btn, .image-loading-state',
-        onChoose(evt) {
-            const rect = evt.item.getBoundingClientRect();
-            const originalEvent = evt.originalEvent || {};
-            const pointerOffsetX = typeof originalEvent.clientX === 'number'
-                ? originalEvent.clientX - rect.left
-                : rect.width / 2;
-            const pointerOffsetY = typeof originalEvent.clientY === 'number'
-                ? originalEvent.clientY - rect.top
-                : rect.height / 2;
-
-            imageGridSortable.option('fallbackOffset', {
-                x: Math.round(pointerOffsetX - (rect.width / 2)),
-                y: Math.round(pointerOffsetY - (rect.height / 2))
-            });
-            sortablePendingPick = {
-                item: evt.item,
-                originalEvent: evt.originalEvent,
-                pointerOffsetX,
-                pointerOffsetY
-            };
-        },
-        onClone(evt) {
-            if (evt.clone) {
-                evt.clone.classList.add('image-drag-clone-card');
-            }
-        },
-        onStart(evt) {
-            isInternalDrag = true;
-            document.body.classList.add('image-reorder-active');
-            clearNativeSelection();
-
-            const pendingPick = sortablePendingPick && sortablePendingPick.item === evt.item
-                ? sortablePendingPick
-                : {
-                    item: evt.item,
-                    originalEvent: evt.originalEvent,
-                    pointerOffsetX: evt.item.offsetWidth / 2,
-                    pointerOffsetY: evt.item.offsetHeight / 2
-                };
-
-            beginSortableDragSession(
-                evt.item,
-                pendingPick.originalEvent || evt.originalEvent,
-                pendingPick.pointerOffsetX,
-                pendingPick.pointerOffsetY
-            );
-            evt.item.classList.add('image-drag-picked');
-            updateSortableDragPointerFromEvent(evt.originalEvent);
-            startSortableAutoScroll();
-        },
-        onMove(evt, originalEvent) {
-            updateSortableDragPointerFromEvent(originalEvent);
-            setSortableHoverTarget(evt.related);
-            return true;
-        },
-        onUnchoose(evt) {
-            sortablePendingPick = null;
-            cleanupSortableVisualState(evt.item);
-        },
-        onEnd(evt) {
-            const finishedDragSession = finishSortableDragSession();
-            document.body.classList.remove('image-reorder-active');
-            clearNativeSelection();
-            isInternalDrag = false;
-            sortablePendingPick = null;
-            imageGridSortable.option('fallbackOffset', { x: 0, y: 0 });
-
-            const oldIndex = Number(evt.oldIndex);
-            const newIndex = Number(evt.newIndex);
-            if (!Number.isInteger(oldIndex) || !Number.isInteger(newIndex) || oldIndex === newIndex) {
-                cleanupSortableVisualState(evt.item);
-                return;
-            }
-
-            pushUndoState('Reordenar imágenes');
-            const moved = imagesData.splice(oldIndex, 1)[0];
-            imagesData.splice(newIndex, 0, moved);
-            markSessionDirty(true);
-            dragClickSuppressUntil = Date.now() + 220;
-            suppressNextGridEnterAnimation = false;
-            pendingDropCelebrateIdx = null;
-            syncVisibleImageCardBindings();
-            animateGridReorderFrom(finishedDragSession?.startPositions, {
-                excludeUiId: evt.item.getAttribute('data-ui-id')
-            });
-            evt.item.classList.remove('sortable-chosen', 'sortable-ghost', 'sortable-drag');
-            evt.item.style.opacity = '1';
-            evt.item.style.visibility = 'visible';
-            cleanupSortableVisualState(evt.item);
-            requestAnimationFrame(() => {
-                triggerImageDropCelebrate(evt.item);
-                window.setTimeout(() => {
-                    evt.item.style.opacity = '';
-                    evt.item.style.visibility = '';
-                }, 900);
-            });
-        }
-    });
+    return;
 }
 
 // --- Cropper: abrir desde miniatura ---
@@ -2770,17 +2867,20 @@ function updateCurrentDragGhostPosition(clientX, clientY) {
 }
 
 function getViewportScrollState() {
-    const scrollTop = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    const scrollEl = getActiveScrollContainer();
+    const scrollTop = scrollEl?.scrollTop || window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
     const scrollHeight = Math.max(
+        scrollEl?.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
         document.body.scrollHeight || 0,
         document.documentElement.offsetHeight || 0,
         document.body.offsetHeight || 0
     );
+    const viewportHeight = scrollEl?.clientHeight || window.innerHeight || document.documentElement.clientHeight || 0;
 
     return {
         scrollTop,
-        maxScrollTop: Math.max(0, scrollHeight - window.innerHeight)
+        maxScrollTop: Math.max(0, scrollHeight - viewportHeight)
     };
 }
 
@@ -2874,9 +2974,13 @@ function runPointerDragAutoScroll() {
         return;
     }
 
+    const scrollContainer = getActiveScrollContainer();
     const clientY = pointerDragState.lastClientY;
-    const scrollMargin = 100; // Zona para trigger de scroll
-    const viewportHeight = window.innerHeight;
+    const scrollMargin = 180;
+    const viewportRect = scrollContainer === document.body || scrollContainer === document.documentElement || scrollContainer === document.scrollingElement
+        ? { top: 0, bottom: window.innerHeight || document.documentElement.clientHeight || 0 }
+        : scrollContainer.getBoundingClientRect();
+    const viewportHeight = Math.max(0, viewportRect.bottom - viewportRect.top);
     const { scrollTop, maxScrollTop } = getViewportScrollState();
     
     // Obtener posición de la card que estamos arrastrando
@@ -2888,31 +2992,33 @@ function runPointerDragAutoScroll() {
     let scrollAmount = 0;
 
     // Chequear BORDE SUPERIOR: cursor o card cerca del top
-    const topProbe = ghostBounds ? Math.min(clientY, ghostBounds.top) : clientY;
+    const topProbe = ghostBounds ? Math.min(clientY, ghostBounds.top) - viewportRect.top : clientY - viewportRect.top;
     if (topProbe < scrollMargin) {
         const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
-        scrollAmount = -Math.max(12, Math.round(35 * intensity));
+        scrollAmount = -Math.max(14, Math.round(48 * intensity));
     }
     
     // Chequear BORDE INFERIOR: cursor o card cerca del bottom
-    const bottomProbe = ghostBounds ? Math.max(clientY, ghostBounds.bottom) : clientY;
+    const bottomProbe = ghostBounds ? Math.max(clientY, ghostBounds.bottom) - viewportRect.top : clientY - viewportRect.top;
     if (bottomProbe > viewportHeight - scrollMargin) {
         const intensity = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
-        scrollAmount = Math.max(12, Math.round(35 * intensity));
+        scrollAmount = Math.max(14, Math.round(48 * intensity));
     }
 
     // Si hay que hacer scroll y no estamos en los límites
     if (scrollAmount !== 0) {
         if ((scrollAmount < 0 && scrollTop > 0) || (scrollAmount > 0 && scrollTop < maxScrollTop)) {
-            window.scrollBy(0, scrollAmount);
+            const appliedScroll = scrollPageBy(scrollAmount);
+            if (appliedScroll !== 0) {
+                syncPointerDragVisuals();
+            }
         }
     }
 }
 
 function startPointerDragAutoScroll() {
-    // Si ya existe el intervalo, no lo recreamos, solo dejamos que siga
     if (autoScrollInterval) return;
-    autoScrollInterval = setInterval(runPointerDragAutoScroll, 30);
+    autoScrollInterval = setInterval(runPointerDragAutoScroll, 16);
 }
 
 function finishPointerDrag() {
@@ -2977,8 +3083,7 @@ function beginPointerDrag() {
 }
 
 function handlePointerDragStartIntent(e) {
-    if (e.pointerType === 'touch') return;
-    if (e.button !== 0) return;
+    if (e.pointerType !== 'touch' && e.button !== 0) return;
 
     const loadingTarget = e.target.closest && e.target.closest('.image-loading-state');
     if (loadingTarget) return;
@@ -2992,7 +3097,7 @@ function handlePointerDragStartIntent(e) {
     } else if (e.target.closest && e.target.closest('select, input')) {
         dragThreshold = 16;
     } else if (e.target.closest && e.target.closest('button')) {
-        dragThreshold = 14;
+        dragThreshold = e.pointerType === 'touch' ? 6 : 8;
     } else if (e.target.closest && e.target.closest('.img-cropper-trigger')) {
         dragThreshold = 8;
     }

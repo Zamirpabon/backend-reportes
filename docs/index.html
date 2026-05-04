@@ -805,38 +805,6 @@
   });
 })();
 
-document.addEventListener('DOMContentLoaded', function() {
-    function toggleScrollBtns() {
-      const topBtn = document.getElementById('scrollToTopBtn');
-      const bottomBtn = document.getElementById('scrollToBottomBtn');
-      if (!topBtn || !bottomBtn) return;
-      const scrollY = window.scrollY || document.documentElement.scrollTop;
-      const winH = window.innerHeight || document.documentElement.clientHeight;
-      const docH = document.documentElement.scrollHeight;
-      const imageCount = document.querySelectorAll('.image-box').length;
-      const hasMeaningfulOverflow = (docH - winH > 420) && imageCount > 3;
-      topBtn.style.display = hasMeaningfulOverflow && scrollY > 120 ? 'block' : 'none';
-      bottomBtn.style.display = hasMeaningfulOverflow && (scrollY + winH < docH - 140) ? 'block' : 'none';
-    }
-  window.updateScrollBtns = toggleScrollBtns;
-  const topBtn = document.getElementById('scrollToTopBtn');
-  const bottomBtn = document.getElementById('scrollToBottomBtn');
-  if (topBtn) {
-    topBtn.onclick = function(){ window.scrollTo({top:0,behavior:'smooth'}); };
-  }
-  if (bottomBtn) {
-    bottomBtn.onclick = function(){ window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); };
-  }
-  window.addEventListener('scroll', toggleScrollBtns);
-  window.addEventListener('resize', toggleScrollBtns);
-  toggleScrollBtns();
-});
-    </script>
-    <!-- Botones de scroll rápido -->
-    <button id="scrollToTopBtn" class="scroll-fab scroll-fab-top" type="button" aria-label="Subir rápido" title="Subir rápido">↑</button>
-    <button id="scrollToBottomBtn" class="scroll-fab scroll-fab-bottom" type="button" aria-label="Bajar rápido" title="Bajar rápido">↓</button>
-
-    <script>
 // Dropdown logic SOLO para el menú ⋮ de la fila de controles
 (function(){
     var btn = document.getElementById('optionsMenuBtn');
