@@ -8,13 +8,13 @@ on:
 jobs:
   heartbeat:
     runs-on: ubuntu-latest
+    env:
+      BACKEND_URL: ${{ secrets.BACKEND_URL }}
+      MAINTENANCE_KEY: ${{ secrets.MAINTENANCE_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - name: Validate configuration
-        env:
-          BACKEND_URL: ${{ secrets.BACKEND_URL }}
-          MAINTENANCE_KEY: ${{ secrets.MAINTENANCE_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           if [ -n "$BACKEND_URL" ]; then
             if [ -z "$MAINTENANCE_KEY" ]; then
@@ -38,10 +38,7 @@ jobs:
           echo "Using direct Supabase mode"
 
       - name: Run heartbeat through backend
-        if: ${{ secrets.BACKEND_URL != '' }}
-        env:
-          BACKEND_URL: ${{ secrets.BACKEND_URL }}
-          MAINTENANCE_KEY: ${{ secrets.MAINTENANCE_KEY }}
+        if: ${{ env.BACKEND_URL != '' }}
         run: |
           curl --fail --show-error --silent \
             --retry 3 \
@@ -50,10 +47,7 @@ jobs:
             "${BACKEND_URL%/}/maintenance?key=${MAINTENANCE_KEY}"
 
       - name: Run heartbeat directly against Supabase
-        if: ${{ secrets.BACKEND_URL == '' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        if: ${{ env.BACKEND_URL == '' }}
         run: |
           curl --fail --show-error --silent \
             --retry 3 \
