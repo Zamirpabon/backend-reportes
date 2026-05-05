@@ -161,16 +161,35 @@ function getScrollAnimationDuration(distance) {
     return Math.max(550, Math.min(1250, 520 + (normalizedDistance * 0.18)));
 }
 
-function animateWindowScrollTo(targetTop, duration) {
-    const startTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+function getScrollElement() {
+    return document.scrollingElement || document.documentElement || document.body;
+}
+
+function animateWindowScrollTo(targetTop) {
+    const scrollEl = getScrollElement();
     const pageHeight = Math.max(
+        scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
         document.body.scrollHeight || 0
     );
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
     const clampedTarget = Math.max(0, Math.min(targetTop, Math.max(0, pageHeight - viewportHeight)));
+
+    if (typeof scrollEl.scrollTo === 'function') {
+        try {
+            scrollEl.scrollTo({ top: clampedTarget, behavior: 'smooth' });
+            if (scrollEl !== window && typeof window.scrollTo === 'function') {
+                window.scrollTo({ top: clampedTarget, behavior: 'smooth' });
+            }
+            return;
+        } catch (error) {
+            // Fallback to custom animation if native smooth scroll fails
+        }
+    }
+
+    const startTop = scrollEl.scrollTop || 0;
     const distance = clampedTarget - startTop;
-    const animationDuration = duration ?? getScrollAnimationDuration(distance);
+    const animationDuration = getScrollAnimationDuration(distance);
 
     if (smoothAnchorScrollFrame) {
         cancelAnimationFrame(smoothAnchorScrollFrame);
@@ -178,7 +197,7 @@ function animateWindowScrollTo(targetTop, duration) {
     }
 
     if (Math.abs(distance) < 2) {
-        window.scrollTo(0, clampedTarget);
+        scrollEl.scrollTo(0, clampedTarget);
         return;
     }
 
@@ -189,12 +208,12 @@ function animateWindowScrollTo(targetTop, duration) {
         const progress = Math.min(1, elapsed / animationDuration);
         const eased = easeInOutCubic(progress);
         const nextTop = startTop + (distance * eased);
-        window.scrollTo(0, nextTop);
+        scrollEl.scrollTo(0, nextTop);
 
         if (progress < 1) {
             smoothAnchorScrollFrame = requestAnimationFrame(step);
         } else {
-            window.scrollTo(0, clampedTarget);
+            scrollEl.scrollTo(0, clampedTarget);
             smoothAnchorScrollFrame = null;
         }
     };
@@ -203,7 +222,9 @@ function animateWindowScrollTo(targetTop, duration) {
 }
 
 function scrollToImageAnchor(position = 'top') {
+    const scrollEl = getScrollElement();
     const pageHeight = Math.max(
+        scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
         document.body.scrollHeight || 0
     );
@@ -222,15 +243,18 @@ function scrollToImageAnchor(position = 'top') {
 
 function updateScrollControlState() {
     if (!floatingScrollControls) return;
+    const scrollEl = getScrollElement();
     const pageHeight = Math.max(
+        scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
         document.body.scrollHeight || 0
     );
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const canScrollPage = pageHeight > viewportHeight + 8;
+    const canScrollPage = pageHeight > viewportHeight + 1;
     floatingScrollControls.classList.toggle('is-empty', !canScrollPage);
     floatingScrollControls.querySelectorAll('button').forEach((button) => {
-        button.disabled = !canScrollPage;
+        button.disabled = false;
+        button.classList.toggle('is-disabled', !canScrollPage);
     });
 }
 
@@ -265,6 +289,7 @@ function ensureFloatingScrollControls() {
 
     window.addEventListener('resize', updateScrollControlState);
     window.addEventListener('scroll', updateScrollControlState);
+    window.addEventListener('load', updateScrollControlState);
 }
 
 window.scrollToImageAnchor = scrollToImageAnchor;
@@ -911,11 +936,25 @@ async function fetchStorageUsage() {
     try {
         const res = await apiFetch('/usage');
         if (!res.ok) {
+            if (res.status >= 500) {
+                console.warn('Error servidor en /usage (5xx), ocultando storage card:', res.status);
+                storageUsageCard.hidden = true;
+                return;
+            }
             throw new Error('No se pudo consultar el uso del bucket');
         }
 
         const usage = await res.json();
         latestStorageUsage = usage;
+        
+        // Manejar respuesta con error del backend
+        if (usage.error || usage.method === 'error-fallback') {
+            console.warn('Backend storage usage con error:', usage.error);
+            storageUsageCard.hidden = true;
+            showToast(`Storage: ${usage.error?.slice(0, 80)}...`, 'info');
+            return;
+        }
+        
         const usagePercent = Number.isFinite(usage.usagePercent) ? usage.usagePercent : 0;
         storageUsageCard.hidden = false;
         if (storageUsageFill) storageUsageFill.style.width = `${Math.max(4, usagePercent)}%`;
@@ -925,8 +964,9 @@ async function fetchStorageUsage() {
                 : `0 B de ${formatBytes(usage.limitBytes)} usados`;
         }
         if (storageUsageDetail) {
+            const estimatedNote = usage.estimated ? ' (estimado)' : '';
             storageUsageDetail.textContent = usage.filesCount > 0
-                ? `${formatUsagePercent(usagePercent)} del espacio disponible para tus fotos`
+                ? `${formatUsagePercent(usagePercent)} del espacio disponible para tus fotos${estimatedNote}`
                 : 'Aún no hay fotos guardadas';
         }
         if (storageUsageFiles) {
@@ -938,7 +978,13 @@ async function fetchStorageUsage() {
     } catch (error) {
         console.error('No se pudo cargar el uso de espacio:', error);
         latestStorageUsage = null;
-        storageUsageCard.hidden = true;
+        if (storageUsageCard) {
+            storageUsageCard.hidden = true;
+            // Toast solo si no es 5xx ya manejado arriba
+            if (!error.message.includes('5')) {
+                showToast('No disponible info de storage (temporal)', 'info');
+            }
+        }
         updateDeviceCacheUsage();
     }
 }
@@ -1167,6 +1213,7 @@ async function initializeApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initializeApp);
+window.addEventListener('load', ensureFloatingScrollControls);
 
 // --- Puente directo a Supabase ---
 async function ensureSupabaseReady() {
@@ -4427,18 +4474,23 @@ async function clearAllUploadedImages() {
             return;
         }
 
+        // OPTIMIZACIÓN: Refresh completo UI + storage
+        imagesData = [];
+        imageCount = 0;
         if (currentSessionName) {
-            await loadSessionFromDB({ sessionName: currentSessionName, silent: true, loaderMessage: 'Limpiando imágenes...' });
+            await loadSessionFromDB({ sessionName: currentSessionName, silent: true });
         } else {
             await loadSession();
         }
+        renderGrid();
         updateImageCounter();
         fetchStorageUsage();
-        showToast(deletingSessionImages ? 'Las imágenes de esta sesión fueron eliminadas.' : 'Las imágenes de Sin sesión fueron eliminadas.', 'info');
+        showToast(deletingSessionImages ? '✅ Imágenes eliminadas de la sesión.' : '✅ Espacio Sin sesión limpiado.', 'success');
     } finally {
         await hideDeleteLoader();
     }
 }
+
 
 function removeOldSessionControls() {
     const old = document.getElementById('sessionControls');
@@ -4481,6 +4533,26 @@ if (quickBtn) {
 // --- Lógica para selección rápida de estado ---
 window.quickStateMode = false;
 window.quickStateSelected = null;
+
+window.quickStateSelectAll = async function(state) {
+  if (!state || imagesData.length === 0) return;
+  // Optimistic UI
+  if (currentSessionName) pushUndoState('Estado rápido todas');
+  imagesData.forEach((img, i) => { if (img) img.status = state; });
+  renderGrid();
+  updateImageCounter();
+  // Background sync
+  const promises = imagesData.filter(img => img?._id).map(img => 
+    apiFetch(`/image/${img._id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: img.description || '', status: state })
+    }).catch(console.warn)
+  );
+  const results = await Promise.allSettled(promises);
+  const success = results.filter(r => r.status === 'fulfilled').length;
+  showToast(`⚡ "${getQuickStateVisual(state).label}" → ${success}/${promises.length}`, 'success');
+};
 
 function getQuickStateVisual(state) {
     switch (state) {
@@ -4548,14 +4620,8 @@ function showQuickStateBanner() {
     document.getElementById('quickStateAmarillo').onclick = () => setQuickStateSelection('amarillo');
     document.getElementById('quickStateRojo').onclick = () => setQuickStateSelection('rojo');
     document.getElementById('quickStateClear').onclick = () => setQuickStateSelection('');
-    document.getElementById('quickStateSelectAll').onclick = async function() {
-        if (window.quickStateSelected === null || imagesData.length === 0) return;
-        if (currentSessionName) {
-            pushUndoState('Estado rápido en todas');
-        }
-        await Promise.all(imagesData.map((_, index) => applyQuickStateToImage(index, window.quickStateSelected)));
-        showToast('Estado aplicado a todas las fotos.', 'success');
-    };
+document.getElementById('quickStateSelectAll').onclick = () => quickStateSelectAll(window.quickStateSelected);
+
 
     document.getElementById('quickStateCloseBtn').onclick = function(e) {
         e.stopPropagation();

@@ -5,6 +5,10 @@
     font-family: Tahoma, Arial, sans-serif;
 }
 
+html {
+    scroll-behavior: smooth;
+}
+
 body {
     font-family: Tahoma, Arial, sans-serif;
     background: linear-gradient(120deg, #a8a8a8 0%, #e9eef5 100%);

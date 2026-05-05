@@ -137,6 +137,28 @@
     });
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function retryUpload(uploadFn, attempts = 3, delay = 300) {
+    let lastError;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await uploadFn();
+      } catch (error) {
+        lastError = error;
+        if (attempt === attempts) break;
+        const message = (error && error.message) ? error.message.toLowerCase() : '';
+        if (!message.includes('502') && !message.includes('bad gateway') && !message.includes('timeout')) {
+          break;
+        }
+        await sleep(delay * attempt);
+      }
+    }
+    throw lastError;
+  }
+
   function getPublicFileUrl(storagePath) {
     const client = getClient();
     const { data } = client.storage
@@ -158,18 +180,24 @@
     const extension = getFileExtension(parsed.mimeType);
     const storagePath = `${folder}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
 
-    const { error } = await client.storage.from(SUPABASE_STORAGE_BUCKET).upload(storagePath, parsed.blob, {
-      contentType: parsed.mimeType,
-      upsert: false
-    });
+    const uploadFn = async () => {
+      const { error } = await client.storage.from(SUPABASE_STORAGE_BUCKET).upload(storagePath, parsed.blob, {
+        contentType: parsed.mimeType,
+        upsert: false
+      });
 
-    if (error) throw new Error(`No se pudo subir la imagen a Storage: ${error.message}`);
+      if (error) {
+        throw new Error(`No se pudo subir la imagen a Storage: ${error.message}`);
+      }
 
-    return {
-      storagePath,
-      mimeType: parsed.mimeType,
-      sizeBytes: parsed.sizeBytes
+      return {
+        storagePath,
+        mimeType: parsed.mimeType,
+        sizeBytes: parsed.sizeBytes
+      };
     };
+
+    return retryUpload(uploadFn, 3, 400);
   }
 
   async function deleteStoragePaths(storagePaths) {

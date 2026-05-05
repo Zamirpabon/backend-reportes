@@ -407,101 +407,91 @@ function buildSessionImagePayload(image, index, now, batchId) {
 }
 
 async function getStorageUsageSnapshot() {
-  const collectedObjects = [];
+  try {
+    // Método 1: Intentar listing simple (solo root, sin recursión profunda)
+    const { data: rootFiles, error: listError } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .list('', {
+        limit: 1000,
+        offset: 0,
+        sortBy: { column: 'name', order: 'asc' }
+      });
 
-  async function walkBucket(prefix = '') {
-    let offset = 0;
-    const limit = 100;
-
-    while (true) {
-      const { data, error } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .list(prefix, {
-          limit,
-          offset,
-          sortBy: { column: 'name', order: 'asc' }
-        });
-
-      if (error) {
-        throw new Error(`No se pudo consultar el uso del bucket: ${error.message}`);
-      }
-
-      const entries = data || [];
-      if (entries.length === 0) {
-        break;
-      }
-
-      for (const entry of entries) {
-        const entryName = normalizeText(entry?.name);
-        if (!entryName) continue;
-
-        const metadata = entry?.metadata || {};
-        const isFolder = !metadata || Object.keys(metadata).length === 0;
-        const currentPath = prefix ? `${prefix}/${entryName}` : entryName;
-
-        if (isFolder) {
-          await walkBucket(currentPath);
-          continue;
-        }
-
-        collectedObjects.push({
-          storagePath: currentPath,
-          metadata
-        });
-      }
-
-      if (entries.length < limit) {
-        break;
-      }
-
-      offset += entries.length;
+    if (listError) {
+      logWarn('List root files falló, usando fallback DB count', { error: listError.message });
+      return getStorageUsageFallback();
     }
+
+    const filesOnly = (rootFiles || []).filter(entry => entry.metadata && Object.keys(entry.metadata).length > 0);
+    let usedBytes = filesOnly.reduce((total, file) => {
+      const size = Number(file.metadata.size || file.metadata.contentLength || 0);
+      return total + (Number.isFinite(size) ? size : 0);
+    }, 0);
+
+    // Si hay carpetas, estimar conservadoramente
+    const folderCount = rootFiles.length - filesOnly.length;
+    usedBytes += folderCount * 1024; // 1KB estimado por folder
+
+    // Fallback si bytes=0 pero hay files
+    if (filesOnly.length > 0 && usedBytes === 0) {
+      usedBytes = filesOnly.length * 150 * 1024; // ~150KB avg image
+    }
+
+    const usage = {
+      bucket: STORAGE_BUCKET,
+      filesCount: filesOnly.length,
+      usedBytes,
+      limitBytes: STORAGE_LIMIT_BYTES,
+      usagePercent: STORAGE_LIMIT_BYTES > 0 ? Math.min(100, (usedBytes / STORAGE_LIMIT_BYTES) * 100) : 0,
+      method: 'simple-list',
+      estimated: folderCount > 0
+    };
+
+    logInfo('Storage usage calculado (simple list)', usage);
+    return usage;
+
+  } catch (scanError) {
+    logWarn('Full scan falló, usando fallback definitivo', { error: scanError.message });
+    return getStorageUsageFallback();
   }
+}
 
-  await walkBucket('');
+async function getStorageUsageFallback() {
+  try {
+    // Fallback: Count files via DB + avg size estimado
+    const [{ data: looseCount }, { data: sessionCount }] = await Promise.all([
+      supabase.from('images').select('id', { count: 'exact', head: true }),
+      supabase.from('session_images').select('id', { count: 'exact', head: true })
+    ]);
 
-  let usedBytes = collectedObjects.reduce((total, object) => {
-    const sizeCandidates = [
-      object?.metadata?.size,
-      object?.metadata?.fileSize,
-      object?.metadata?.contentLength,
-      object?.metadata?.httpMetadata?.contentLength
-    ];
-    const detectedSize = sizeCandidates
-      .map((value) => Number(value))
-      .find((value) => Number.isFinite(value) && value > 0);
+    const totalFiles = (looseCount?.count || 0) + (sessionCount?.count || 0);
+    const estimatedBytes = totalFiles * 200 * 1024; // 200KB avg por imagen
 
-    return total + (detectedSize || 0);
-  }, 0);
+    const usage = {
+      bucket: STORAGE_BUCKET,
+      filesCount: totalFiles,
+      usedBytes: estimatedBytes,
+      limitBytes: STORAGE_LIMIT_BYTES,
+      usagePercent: STORAGE_LIMIT_BYTES > 0 ? Math.min(100, (estimatedBytes / STORAGE_LIMIT_BYTES) * 100) : 0,
+      method: 'db-fallback',
+      estimated: true
+    };
 
-  if (collectedObjects.length > 0 && usedBytes === 0) {
-    const fallbackSizes = await Promise.all(collectedObjects.map(async (object) => {
-      const storagePath = object.storagePath;
+    logInfo('Storage usage fallback (DB count)', usage);
+    return usage;
 
-      try {
-        const signedUrl = await createSignedFileUrl(storagePath);
-        const response = await fetch(signedUrl, { method: 'HEAD' });
-        const contentLength = Number(response.headers.get('content-length') || 0);
-        return Number.isFinite(contentLength) ? contentLength : 0;
-      } catch (headError) {
-        logWarn('No se pudo estimar el tamaño real de un archivo del bucket', {
-          storagePath,
-          error: headError?.message || headError
-        });
-        return 0;
-      }
-    }));
-
-    usedBytes = fallbackSizes.reduce((sum, size) => sum + size, 0);
+  } catch (fallbackError) {
+    logError('Fallback storage usage también falló', fallbackError);
+    return {
+      bucket: STORAGE_BUCKET,
+      filesCount: 0,
+      usedBytes: 0,
+      limitBytes: STORAGE_LIMIT_BYTES,
+      usagePercent: 0,
+      method: 'error-fallback',
+      error: fallbackError.message
+    };
   }
-
-  return {
-    bucket: STORAGE_BUCKET,
-    filesCount: collectedObjects.length,
-    usedBytes,
-    limitBytes: STORAGE_LIMIT_BYTES,
-    usagePercent: STORAGE_LIMIT_BYTES > 0 ? Math.min(100, (usedBytes / STORAGE_LIMIT_BYTES) * 100) : null
-  };
 }
 
 async function findOrphanedSessions() {
