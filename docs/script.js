@@ -77,6 +77,8 @@ let uploadLoaderDisplayCount = 0;
 let uploadLoaderDisplayTimer = null;
 let imageGridSortable = null;
 let floatingScrollControls = null;
+let __sessionBannerLastHtml = '';
+let imageCounterLastTotal = -1;
 
 // Agregar input para número inicial de imagen
 let imageStartNumber = 1;
@@ -162,23 +164,23 @@ function getScrollAnimationDuration(distance) {
 }
 
 function getScrollElement() {
-    return document.scrollingElement || document.documentElement || document.body;
+    return getActiveScrollContainer();
 }
 
 function animateWindowScrollTo(targetTop) {
-    const scrollEl = getScrollElement();
+    const scrollEl = getActiveScrollContainer();
     const pageHeight = Math.max(
         scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
         document.body.scrollHeight || 0
     );
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const viewportHeight = scrollEl.clientHeight || window.innerHeight || document.documentElement.clientHeight || 0;
     const clampedTarget = Math.max(0, Math.min(targetTop, Math.max(0, pageHeight - viewportHeight)));
 
     if (typeof scrollEl.scrollTo === 'function') {
         try {
             scrollEl.scrollTo({ top: clampedTarget, behavior: 'smooth' });
-            if (scrollEl !== window && typeof window.scrollTo === 'function') {
+            if (scrollEl !== document.body && scrollEl !== document.documentElement && typeof window.scrollTo === 'function') {
                 window.scrollTo({ top: clampedTarget, behavior: 'smooth' });
             }
             return;
@@ -222,39 +224,87 @@ function animateWindowScrollTo(targetTop) {
 }
 
 function scrollToImageAnchor(position = 'top') {
-    const scrollEl = getScrollElement();
-    const pageHeight = Math.max(
-        scrollEl.scrollHeight || 0,
-        document.documentElement.scrollHeight || 0,
-        document.body.scrollHeight || 0
-    );
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const maxScrollTop = Math.max(0, pageHeight - viewportHeight);
-    let targetTop = 0;
-
-    if (position === 'bottom') {
-        targetTop = maxScrollTop;
-    } else if (position === 'middle') {
-        targetTop = maxScrollTop / 2;
+    // Usar .container como scroll container principal
+    const container = document.querySelector('.container');
+    if (!container) {
+        console.log('[scrollToImageAnchor] No container found');
+        return;
     }
 
-    animateWindowScrollTo(targetTop);
+    // Calcular posiciones basadas en el grid de imágenes
+    const grid = document.getElementById('gridContainer');
+    if (!grid) {
+        console.log('[scrollToImageAnchor] No grid found');
+        return;
+    }
+
+    // Calcular la posición del grid dentro del container usando offsetTop
+    let gridTopInContainer = 0;
+    let element = grid;
+    while (element && element !== container) {
+        gridTopInContainer += element.offsetTop;
+        element = element.offsetParent;
+    }
+
+    const gridHeight = grid.scrollHeight;
+    const containerHeight = container.clientHeight;
+    const containerScrollHeight = container.scrollHeight;
+
+    console.log('[DEBUG scrollToImageAnchor]', {
+        position,
+        gridTopInContainer,
+        gridHeight,
+        containerHeight,
+        containerScrollHeight,
+        containerScrollTop: container.scrollTop,
+        canScroll: containerScrollHeight > containerHeight
+    });
+
+    let targetTop = 0;
+
+    if (position === 'top') {
+        // Ir al inicio del grid
+        targetTop = gridTopInContainer;
+    } else if (position === 'middle') {
+        // Ir al centro del grid
+        const gridCenter = gridTopInContainer + (gridHeight / 2);
+        targetTop = Math.max(0, gridCenter - (containerHeight / 2));
+    } else if (position === 'bottom') {
+        // Ir al final del grid
+        targetTop = gridTopInContainer + gridHeight - containerHeight;
+    }
+
+    // Asegurar que targetTop no exceda el máximo scroll posible
+    const maxScrollTop = Math.max(0, containerScrollHeight - containerHeight);
+    targetTop = Math.max(0, Math.min(targetTop, maxScrollTop));
+
+    console.log('[scrollToImageAnchor]', {
+        position,
+        gridTopInContainer,
+        gridHeight,
+        containerHeight,
+        targetTop,
+        maxScrollTop
+    });
+
+    // Scrollear el contenedor .container
+    console.log('[SCROLLING .container]', { top: targetTop, behavior: 'smooth' });
+    container.scrollTo({ top: targetTop, behavior: 'smooth' });
 }
 
 function updateScrollControlState() {
     if (!floatingScrollControls) return;
-    const scrollEl = getScrollElement();
-    const pageHeight = Math.max(
-        scrollEl.scrollHeight || 0,
-        document.documentElement.scrollHeight || 0,
-        document.body.scrollHeight || 0
-    );
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const canScrollPage = pageHeight > viewportHeight + 1;
-    floatingScrollControls.classList.toggle('is-empty', !canScrollPage);
+    const container = document.querySelector('.container');
+    if (!container) return;
+
+    const pageHeight = container.scrollHeight;
+    const viewportHeight = container.clientHeight;
+    const maxScrollTop = Math.max(0, pageHeight - viewportHeight);
+    const hasScroll = maxScrollTop > 4;
+    floatingScrollControls.classList.toggle('is-empty', !hasScroll);
     floatingScrollControls.querySelectorAll('button').forEach((button) => {
         button.disabled = false;
-        button.classList.toggle('is-disabled', !canScrollPage);
+        button.classList.toggle('is-disabled', !hasScroll);
     });
 }
 
@@ -286,6 +336,7 @@ function ensureFloatingScrollControls() {
     document.body.appendChild(controls);
     floatingScrollControls = controls;
     updateScrollControlState();
+    setTimeout(updateScrollControlState, 100);
 
     window.addEventListener('resize', updateScrollControlState);
     window.addEventListener('scroll', updateScrollControlState);
@@ -1206,6 +1257,7 @@ async function initializeApp() {
         fetchStorageUsage();
         updateDeviceCacheUsage();
         await restoreInitialWorkspace();
+        syncUploadActionsSpacing();
     } catch (error) {
         console.error('No se pudo iniciar la app con Supabase directo:', error);
         showToast(error.message || 'No se pudo conectar con Supabase.', 'error');
@@ -1214,6 +1266,8 @@ async function initializeApp() {
 
 window.addEventListener('DOMContentLoaded', initializeApp);
 window.addEventListener('load', ensureFloatingScrollControls);
+window.addEventListener('load', syncUploadActionsSpacing);
+window.addEventListener('resize', syncUploadActionsSpacing);
 
 // --- Puente directo a Supabase ---
 async function ensureSupabaseReady() {
@@ -1601,35 +1655,43 @@ function updateImageCounter() {
         else document.body.insertBefore(counter, grid);
     }
     let total = imagesData.length;
-    // Input bonito para el número inicial
-    counter.innerHTML =
-      `<span class="stat-pill stat-pill-input">
-        <b class="stat-label">Num. inicial</b>
-        <input type='number' id='imageStartNumberInput' min='1' value='${imageStartNumber}' style='width:60px;font-size:1.08rem;font-weight:bold;border-radius:8px;border:2px solid #3498db;padding:2px 8px;color:#2c3e50;text-align:center;'/>
-      </span>` +
-      `<span id="stateCounter" class="stat-pill">
-        <span class="stat-label">Estados seleccionados</span>
-        <span class="stat-value"><span id="stateCountValue"></span> / ${total}</span>
-      </span>` +
-      `<span id="descCounter" class="stat-pill">
-        <span class="stat-label">Descripciones llenas</span>
-        <span class="stat-value"><span id="descCountValue"></span> / ${total}</span>
-      </span>` +
-      `<span class="stat-pill stat-pill-total">
-        <span class="stat-label">Imágenes subidas</span>
-        <span class="stat-value">${total}</span>
-      </span>`;
-    // Evento para el input de número inicial
-    const input = counter.querySelector('#imageStartNumberInput');
-    if (input) {
-        input.value = imageStartNumber; // Siempre sincroniza el valor visual
-        input.onchange = function() {
-            let val = parseInt(this.value, 10);
-            if (isNaN(val) || val < 1) val = 1;
-            imageStartNumber = val;
-            renderGrid();
-            updateImageCounter();
-        };
+    const mustRebuildCounter = imageCounterLastTotal !== total || !counter.querySelector('#imageStartNumberInput');
+    if (mustRebuildCounter) {
+        imageCounterLastTotal = total;
+        counter.innerHTML =
+          `<span class="stat-pill stat-pill-input">
+            <b class="stat-label">Num. inicial</b>
+            <input type='number' id='imageStartNumberInput' min='1' value='${imageStartNumber}' style='width:60px;font-size:1.08rem;font-weight:bold;border-radius:8px;border:2px solid #3498db;padding:2px 8px;color:#2c3e50;text-align:center;'/>
+          </span>` +
+          `<span id="stateCounter" class="stat-pill">
+            <span class="stat-label">Estados seleccionados</span>
+            <span class="stat-value"><span id="stateCountValue"></span> / ${total}</span>
+          </span>` +
+          `<span id="descCounter" class="stat-pill">
+            <span class="stat-label">Descripciones llenas</span>
+            <span class="stat-value"><span id="descCountValue"></span> / ${total}</span>
+          </span>` +
+          `<span class="stat-pill stat-pill-total">
+            <span class="stat-label">Imágenes subidas</span>
+            <span class="stat-value">${total}</span>
+          </span>`;
+        const input = counter.querySelector('#imageStartNumberInput');
+        if (input) {
+            input.onchange = function() {
+                let val = parseInt(this.value, 10);
+                if (isNaN(val) || val < 1) val = 1;
+                imageStartNumber = val;
+                renderGrid();
+                updateImageCounter();
+            };
+        }
+    } else {
+        const input = counter.querySelector('#imageStartNumberInput');
+        if (input && document.activeElement !== input) {
+            input.value = imageStartNumber;
+        }
+        const totalEl = counter.querySelector('.stat-pill-total .stat-value');
+        if (totalEl) totalEl.textContent = String(total);
     }
     let descFilled = imagesData.filter(img => (img.description && img.description.trim().length > 0)).length;
     let stateFilled = imagesData.filter(img => (img.status && img.status !== "")).length;
@@ -1680,17 +1742,35 @@ function setCurrentSession(name = '') {
     updateSessionActionLayout();
 }
 
-function updateCurrentSessionBanner() {
-    const gridParent = grid && grid.parentElement ? grid.parentElement : null;
-    if (!gridParent) return;
+function syncUploadActionsSpacing() {
+    const sessionPanel = document.querySelector('.session-panel');
+    const actionsSection = document.querySelector('.upload-actions-section');
+    if (!sessionPanel || !actionsSection) return;
 
-    let banner = document.getElementById('currentSessionBanner');
-    if (!banner) {
-        banner = document.createElement('div');
-        banner.id = 'currentSessionBanner';
-        banner.className = 'current-session-banner';
-        gridParent.insertBefore(banner, gridParent.firstChild);
-    }
+    const baseMarginTop = 24;
+    const minGap = 20;
+
+    actionsSection.style.setProperty('position', 'relative', 'important');
+    actionsSection.style.setProperty('clear', 'both', 'important');
+    actionsSection.style.setProperty('padding-top', '0px', 'important');
+    actionsSection.style.setProperty('margin-top', `${baseMarginTop}px`, 'important');
+
+    const adjustSpacing = () => {
+        const panelRect = sessionPanel.getBoundingClientRect();
+        const actionsRect = actionsSection.getBoundingClientRect();
+        const overlap = Math.ceil((panelRect.bottom + minGap) - actionsRect.top);
+        const finalMarginTop = baseMarginTop + Math.max(0, overlap);
+        actionsSection.style.setProperty('margin-top', `${finalMarginTop}px`, 'important');
+    };
+
+    requestAnimationFrame(() => {
+        requestAnimationFrame(adjustSpacing);
+    });
+}
+
+function updateCurrentSessionBanner() {
+    const banner = document.getElementById('currentSessionBanner');
+    if (!banner) return;
 
     const hasDraftWithoutSession = !currentSessionName && imagesData.length > 0;
 
@@ -1708,7 +1788,7 @@ function updateCurrentSessionBanner() {
             ? `<span class="current-session-expiry">Se borrará en ${formatRemainingLifetime(looseImagesRemaining)}</span>`
             : '';
 
-        banner.innerHTML = `
+        const nextHtml = `
             <div class="current-session-copy">
                 <div class="current-session-head">
                     <span class="current-session-kicker">${bannerKicker}</span>
@@ -1723,9 +1803,15 @@ function updateCurrentSessionBanner() {
                 </span>
             </div>
         `;
+        if (nextHtml === __sessionBannerLastHtml) {
+            return;
+        }
+        __sessionBannerLastHtml = nextHtml;
+        banner.innerHTML = nextHtml;
         banner.classList.toggle('is-loose-session', !currentSessionName);
         banner.classList.add('is-visible');
     } else {
+        __sessionBannerLastHtml = '';
         banner.innerHTML = '';
         banner.classList.remove('is-loose-session');
         banner.classList.remove('is-visible');
@@ -1761,6 +1847,7 @@ function markSessionDirty(isDirty = true) {
         }
     }
     updateCurrentSessionBanner();
+    syncUploadActionsSpacing();
 }
 
 function updateSessionActionLayout() {
@@ -1800,6 +1887,8 @@ function updateSessionActionLayout() {
         const canReloadSaved = Boolean(currentSessionName);
         reloadSavedBtn.style.display = canReloadSaved ? 'inline-flex' : 'none';
     }
+
+    syncUploadActionsSpacing();
 }
 
 async function handlePrimarySessionSave() {
@@ -2202,9 +2291,25 @@ function resizeImage(dataUrl, maxSize, callback) {
 }
 
 function renderGrid() {
+    const scrollEl = getActiveScrollContainer();
+    const pageEl = getPageScrollElement();
+    const scrollIsViewport = !scrollEl
+        || scrollEl === document.body
+        || scrollEl === document.documentElement
+        || scrollEl === pageEl;
+    const savedScrollTop = scrollIsViewport
+        ? (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0)
+        : (scrollEl.scrollTop || 0);
+    const restoreScrollPosition = () => {
+        if (scrollIsViewport) {
+            window.scrollTo(0, savedScrollTop);
+        } else if (scrollEl) {
+            scrollEl.scrollTop = savedScrollTop;
+        }
+    };
+
     grid.innerHTML = '';
     grid.classList.remove('is-empty-state');
-    const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
     if (!currentSessionName && imagesData.length === 0) {
         grid.classList.add('is-empty-state');
         grid.innerHTML = `
@@ -2228,7 +2333,7 @@ function renderGrid() {
         if (typeof window.updateScrollBtns === 'function') {
             setTimeout(() => window.updateScrollBtns(), 0);
         }
-        window.scrollTo(0, scrollTop);
+        restoreScrollPosition();
         return;
     }
     imagesData.forEach((imageData, idx) => {
@@ -2247,7 +2352,7 @@ function renderGrid() {
     if (typeof window.updateScrollBtns === 'function') {
         setTimeout(() => window.updateScrollBtns(), 0);
     }
-    window.scrollTo(0, scrollTop);
+    restoreScrollPosition();
 }
 
 function createImageBox(imageData, idx) {

@@ -1000,7 +1000,9 @@ body.image-reorder-active * {
 }
 
 .footer {
-    width: 100vw;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     background: #3283df;
     color: #fcfcfc;
     text-align: center;
@@ -1009,12 +1011,13 @@ body.image-reorder-active * {
     font-family: Tahoma, Arial, sans-serif;
     letter-spacing: 1px;
     box-shadow: 0 -2px 16px #0001;
-    position: relative; /* Cambiado de fixed a relative */
-    left: 0;
-    bottom: 0;
-    z-index: 10;
+    position: relative;
+    left: auto;
+    bottom: auto;
+    z-index: 1;
     margin-top: 0;
     padding-bottom: 0;
+    flex-shrink: 0;
 }
 
 .footer span {
