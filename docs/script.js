@@ -161,12 +161,8 @@ function getScrollAnimationDuration(distance) {
     return Math.max(550, Math.min(1250, 520 + (normalizedDistance * 0.18)));
 }
 
-function getScrollElement() {
-    return document.scrollingElement || document.documentElement || document.body;
-}
-
 function animateWindowScrollTo(targetTop) {
-    const scrollEl = getScrollElement();
+    const scrollEl = getActiveScrollContainer();
     const pageHeight = Math.max(
         scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
@@ -222,7 +218,7 @@ function animateWindowScrollTo(targetTop) {
 }
 
 function scrollToImageAnchor(position = 'top') {
-    const scrollEl = getScrollElement();
+    const scrollEl = getActiveScrollContainer();
     const pageHeight = Math.max(
         scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
@@ -243,7 +239,7 @@ function scrollToImageAnchor(position = 'top') {
 
 function updateScrollControlState() {
     if (!floatingScrollControls) return;
-    const scrollEl = getScrollElement();
+    const scrollEl = getActiveScrollContainer();
     const pageHeight = Math.max(
         scrollEl.scrollHeight || 0,
         document.documentElement.scrollHeight || 0,
