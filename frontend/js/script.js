@@ -359,6 +359,13 @@ window.scrollToImageAnchor = scrollToImageAnchor;
 window.animateWindowScrollTo = animateWindowScrollTo;
 window.updateScrollBtns = updateScrollControlState;
 
+function refreshFullscreenOverlayFlag() {
+    if (!document || !document.body) return;
+    const anyVisible = (appLoaderOverlay && appLoaderOverlay.classList.contains('is-visible'))
+        || (exportLoaderOverlay && exportLoaderOverlay.classList.contains('is-visible'));
+    document.body.classList.toggle('has-fullscreen-overlay', !!anyVisible);
+}
+
 function showAppLoader(message = 'Cargando sesión...') {
     if (!appLoaderOverlay) return;
     if (appLoaderLabel) {
@@ -367,6 +374,7 @@ function showAppLoader(message = 'Cargando sesión...') {
     appLoaderShownAt = Date.now();
     appLoaderOverlay.classList.add('is-visible');
     appLoaderOverlay.setAttribute('aria-hidden', 'false');
+    refreshFullscreenOverlayFlag();
 }
 
 async function hideAppLoader(minDuration = 0) {
@@ -378,6 +386,7 @@ async function hideAppLoader(minDuration = 0) {
     }
     appLoaderOverlay.classList.remove('is-visible');
     appLoaderOverlay.setAttribute('aria-hidden', 'true');
+    refreshFullscreenOverlayFlag();
 }
 
 function showExportLoader(title = 'Generando reporte Word', text = 'Estamos preparando tu documento...') {
@@ -386,12 +395,14 @@ function showExportLoader(title = 'Generando reporte Word', text = 'Estamos prep
     if (exportLoaderText) exportLoaderText.textContent = text;
     exportLoaderOverlay.classList.add('is-visible');
     exportLoaderOverlay.setAttribute('aria-hidden', 'false');
+    refreshFullscreenOverlayFlag();
 }
 
 function hideExportLoader() {
     if (!exportLoaderOverlay) return;
     exportLoaderOverlay.classList.remove('is-visible');
     exportLoaderOverlay.setAttribute('aria-hidden', 'true');
+    refreshFullscreenOverlayFlag();
 }
 
 function showDeleteLoader(title = 'Eliminando...', text = 'Estamos limpiando la información seleccionada.') {

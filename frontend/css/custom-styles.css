@@ -2186,10 +2186,19 @@ html {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   pointer-events: auto;
+  transition: opacity 0.22s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.22s ease;
 }
 
 .floating-scroll-controls.is-empty {
   opacity: 0.72;
+}
+
+/* Ocultar los botones flotantes cuando hay un loader/overlay activo en pantalla */
+body.has-fullscreen-overlay .floating-scroll-controls {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(24px);
+  pointer-events: none;
 }
 
 .floating-scroll-btn {
