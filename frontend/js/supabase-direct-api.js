@@ -386,27 +386,87 @@
 
     await walkBucket('');
 
+    const pathToSize = new Map();
+    for (const object of collectedObjects) {
+      const metadata = object.metadata || {};
+      const objectSize = Number(metadata.size || metadata.bytes || metadata.fileSize || 0);
+      pathToSize.set(object.storagePath, Number.isFinite(objectSize) ? objectSize : 0);
+    }
+
     const usedBytes = collectedObjects.reduce((total, object) => {
       const metadata = object.metadata || {};
       const objectSize = Number(metadata.size || metadata.bytes || metadata.fileSize || 0);
       return total + (Number.isFinite(objectSize) ? objectSize : 0);
     }, 0);
 
-    const [{ count: looseCount, error: looseCountError }, { count: sessionCount, error: sessionCountError }] = await Promise.all([
+    const [
+      { count: looseCount, error: looseCountError },
+      { count: sessionCount, error: sessionCountError },
+      { data: sessionsList, error: sessionsListError },
+      { data: sessionImagesRows, error: sessionImagesError },
+      { data: looseImagesRows, error: looseImagesError }
+    ] = await Promise.all([
       client.from('images').select('id', { count: 'exact', head: true }),
-      client.from('session_images').select('id', { count: 'exact', head: true })
+      client.from('session_images').select('id', { count: 'exact', head: true }),
+      client.from('sessions').select('id, name, current_batch_id'),
+      client.from('session_images').select('session_id, batch_id, storage_path'),
+      client.from('images').select('storage_path')
     ]);
 
     if (looseCountError) throw new Error(`No se pudo contar las imágenes sueltas: ${looseCountError.message}`);
     if (sessionCountError) throw new Error(`No se pudo contar las imágenes de sesión: ${sessionCountError.message}`);
+    if (sessionsListError) throw new Error(`No se pudieron listar las sesiones: ${sessionsListError.message}`);
+    if (sessionImagesError) throw new Error(`No se pudieron consultar las imágenes de sesión: ${sessionImagesError.message}`);
+    if (looseImagesError) throw new Error(`No se pudieron consultar las imágenes sueltas: ${looseImagesError.message}`);
+
+    const sessionsById = new Map((sessionsList || []).map((session) => [session.id, session]));
+    const sessionAgg = new Map();
+    for (const row of (sessionImagesRows || [])) {
+      const session = sessionsById.get(row.session_id);
+      if (!session) continue;
+      if (session.current_batch_id && row.batch_id !== session.current_batch_id) continue;
+      const current = sessionAgg.get(session.id) || { name: session.name, photoCount: 0, usedBytes: 0 };
+      current.photoCount += 1;
+      current.usedBytes += pathToSize.get(row.storage_path) || 0;
+      sessionAgg.set(session.id, current);
+    }
+    const sessionsBreakdown = Array.from(sessionAgg.values());
+
+    const looseBytes = (looseImagesRows || []).reduce(
+      (sum, row) => sum + (pathToSize.get(row.storage_path) || 0),
+      0
+    );
 
     const filesCount = Number(looseCount || 0) + Number(sessionCount || 0);
+
+    const referencedPaths = new Set();
+    for (const row of (looseImagesRows || [])) {
+      if (row && row.storage_path) referencedPaths.add(row.storage_path);
+    }
+    for (const row of (sessionImagesRows || [])) {
+      if (row && row.storage_path) referencedPaths.add(row.storage_path);
+    }
+    const orphanFiles = [];
+    let orphanBytes = 0;
+    for (const [storagePath, size] of pathToSize.entries()) {
+      if (referencedPaths.has(storagePath)) continue;
+      orphanFiles.push({ storagePath, sizeBytes: Number(size || 0) });
+      orphanBytes += Number(size || 0);
+    }
+    orphanFiles.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    const ORPHAN_LIST_CAP = 5000;
+    const orphanFilesList = orphanFiles.slice(0, ORPHAN_LIST_CAP);
 
     return {
       usedBytes,
       limitBytes: SUPABASE_STORAGE_LIMIT_BYTES,
       filesCount,
-      usagePercent: SUPABASE_STORAGE_LIMIT_BYTES > 0 ? (usedBytes / SUPABASE_STORAGE_LIMIT_BYTES) * 100 : 0
+      usagePercent: SUPABASE_STORAGE_LIMIT_BYTES > 0 ? (usedBytes / SUPABASE_STORAGE_LIMIT_BYTES) * 100 : 0,
+      sessionsBreakdown,
+      looseBytes,
+      orphanFiles: orphanFilesList,
+      orphanFilesCount: orphanFiles.length,
+      orphanBytes
     };
   }
 
@@ -676,6 +736,134 @@
       return createApiResponse(await getStorageUsageSnapshot());
     }
 
+    if (method === 'POST' && requestUrl.pathname === '/orphans/delete') {
+      const requestedPaths = Array.isArray(body?.storagePaths) ? body.storagePaths.filter(Boolean) : [];
+      if (requestedPaths.length === 0) return createApiResponse({ deleted: 0, skipped: 0 });
+
+      const deleted = [];
+      const skipped = [];
+      for (const storagePath of requestedPaths) {
+        const references = await countStorageReferences(storagePath);
+        if (references > 0) {
+          skipped.push(storagePath);
+          continue;
+        }
+        deleted.push(storagePath);
+      }
+      if (deleted.length > 0) {
+        await deleteStoragePaths(deleted);
+      }
+      return createApiResponse({ deleted: deleted.length, skipped: skipped.length, deletedPaths: deleted, skippedPaths: skipped });
+    }
+
+    if (method === 'POST' && requestUrl.pathname === '/orphans/recover') {
+      const requestedPaths = Array.isArray(body?.storagePaths) ? body.storagePaths.filter(Boolean) : [];
+      const targetSessionName = normalizeText(body?.sessionName || '');
+      const requestedDescription = typeof body?.description === 'string' ? body.description : '';
+      const requestedPositionRaw = body?.position;
+      const requestedPosition = Number.isFinite(Number(requestedPositionRaw)) ? Number(requestedPositionRaw) : null;
+      if (requestedPaths.length === 0 || !targetSessionName) {
+        return createApiResponse({ error: 'Faltan datos para recuperar' }, 400);
+      }
+
+      let { data: session, error: findError } = await client
+        .from('sessions')
+        .select('id, name, current_batch_id')
+        .eq('name', targetSessionName)
+        .maybeSingle();
+      if (findError) throw new Error(`No se pudo buscar la sesión: ${findError.message}`);
+
+      let createdNew = false;
+      if (!session) {
+        const newBatchId = crypto.randomUUID();
+        const { data: created, error: createError } = await client
+          .from('sessions')
+          .insert({ name: targetSessionName, current_batch_id: newBatchId })
+          .select('id, name, current_batch_id')
+          .single();
+        if (createError) throw new Error(`No se pudo crear la sesión: ${createError.message}`);
+        session = created;
+        createdNew = true;
+      }
+
+      let batchId = session.current_batch_id;
+      if (!batchId) {
+        batchId = crypto.randomUUID();
+        await client.from('sessions').update({ current_batch_id: batchId }).eq('id', session.id);
+      }
+
+      // Count photos in current batch
+      const { count: existingCount, error: countError } = await client
+        .from('session_images')
+        .select('id', { count: 'exact', head: true })
+        .eq('session_id', session.id)
+        .eq('batch_id', batchId);
+      if (countError) throw new Error(`No se pudo contar posiciones: ${countError.message}`);
+      const total = Number(existingCount || 0);
+
+      // Decide insertion position
+      let insertAt = total + 1;
+      if (requestedPosition !== null) {
+        insertAt = Math.max(1, Math.min(total + 1, Math.floor(requestedPosition)));
+      }
+
+      const inserting = requestedPaths.length;
+
+      // Shift positions >= insertAt by +inserting
+      if (insertAt <= total) {
+        const { data: rowsToShift, error: shiftReadError } = await client
+          .from('session_images')
+          .select('id, position')
+          .eq('session_id', session.id)
+          .eq('batch_id', batchId)
+          .gte('position', insertAt)
+          .order('position', { ascending: false });
+        if (shiftReadError) throw new Error(`No se pudo desplazar posiciones: ${shiftReadError.message}`);
+        for (const row of (rowsToShift || [])) {
+          await client
+            .from('session_images')
+            .update({ position: row.position + inserting })
+            .eq('id', row.id);
+        }
+      }
+
+      const guessMime = (path) => {
+        const ext = (path.split('.').pop() || '').toLowerCase();
+        if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+        if (ext === 'webp') return 'image/webp';
+        if (ext === 'gif') return 'image/gif';
+        if (ext === 'avif') return 'image/avif';
+        return 'image/png';
+      };
+
+      const rowsToInsert = requestedPaths.map((storagePath, i) => ({
+        session_id: session.id,
+        batch_id: batchId,
+        storage_path: storagePath,
+        mime_type: guessMime(storagePath),
+        description: inserting === 1 ? requestedDescription : '',
+        status: '',
+        position: insertAt + i
+      }));
+
+      const { error: insertError } = await client.from('session_images').insert(rowsToInsert);
+      if (insertError) throw new Error(`No se pudieron recuperar las imágenes: ${insertError.message}`);
+
+      await client
+        .from('sessions')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', session.id);
+
+      return createApiResponse({
+        recovered: requestedPaths.length,
+        sessionName: session.name,
+        sessionId: session.id,
+        createdNew,
+        insertedAt: insertAt,
+        totalAfter: total + inserting
+      });
+    }
+
     if (method === 'GET' && requestUrl.pathname === '/images') {
       await cleanupExpiredLooseImages();
       const includeImageData = includeImageDataFromUrl(requestUrl);
@@ -887,6 +1075,17 @@
       } catch (error) {
         return createApiResponse({ error: formatSupabaseError(error) }, error && error.status ? error.status : 500);
       }
+    },
+    getStorageFileUrl: async (storagePath) => {
+      await ensureReady();
+      try {
+        const client = getClient();
+        const { data, error } = await client.storage
+          .from(SUPABASE_STORAGE_BUCKET)
+          .createSignedUrl(storagePath, 60 * 60);
+        if (!error && data && data.signedUrl) return data.signedUrl;
+      } catch (_) { /* fallthrough to public URL */ }
+      return getPublicFileUrl(storagePath);
     }
   };
 

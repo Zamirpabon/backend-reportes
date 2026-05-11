@@ -572,16 +572,1008 @@ function renderStorageSessionsDropdown() {
         return;
     }
 
+    const sessionBytesByName = new Map(
+        (latestStorageUsage?.sessionsBreakdown || []).map((entry) => [entry.name, Number(entry.usedBytes || 0)])
+    );
+    const looseBytes = Number(latestStorageUsage?.looseBytes || 0);
+    const totalBytes = Number(latestStorageUsage?.usedBytes || 0);
+    const orphanBytesFromApi = Number(latestStorageUsage?.orphanBytes || 0);
+    const orphanCount = Number(latestStorageUsage?.orphanFilesCount || 0);
+    const orphanFiles = Array.isArray(latestStorageUsage?.orphanFiles)
+        ? latestStorageUsage.orphanFiles
+        : [];
+
+    let accountedBytes = looseBytes;
+    for (const entry of (latestStorageUsage?.sessionsBreakdown || [])) {
+        accountedBytes += Number(entry.usedBytes || 0);
+    }
+    const orphanBytes = orphanBytesFromApi > 0
+        ? orphanBytesFromApi
+        : Math.max(0, totalBytes - accountedBytes);
+
+    const renderedRows = rows.map((session) => {
+        const bytes = session.name === 'Sin sesión'
+            ? looseBytes
+            : (sessionBytesByName.get(session.name) || 0);
+        const sizeStr = bytes > 0 ? ` · ${formatBytes(bytes)}` : '';
+        return `
+            <div class="storage-session-item">
+                <span class="storage-session-name">${session.name}</span>
+                <span class="storage-session-count">${session.photoCount} foto${session.photoCount === 1 ? '' : 's'}${sizeStr}</span>
+            </div>
+        `;
+    });
+
+    if (orphanBytes > 1024) {
+        const summaryCount = orphanCount > 0
+            ? `${orphanCount} archivo${orphanCount === 1 ? '' : 's'} · ${formatBytes(orphanBytes)}`
+            : `${formatBytes(orphanBytes)}`;
+
+        renderedRows.push(`
+            <div class="storage-session-item storage-session-item-orphan" data-orphan-toggle="true" role="button" tabindex="0" aria-expanded="false" title="Archivos en Storage que ya no están referenciados por ninguna sesión. Sobrantes de fotos eliminadas o reemplazadas.">
+                <span class="storage-session-name">
+                    Archivos sin uso
+                    <span class="storage-orphan-caret" aria-hidden="true">▾</span>
+                </span>
+                <span class="storage-session-count">${summaryCount}</span>
+            </div>
+            <div class="storage-orphan-list" hidden>
+                <button type="button" class="storage-orphan-gallery-btn" id="storageOrphanGalleryBtn">
+                    Ver galería de archivos sin uso
+                </button>
+            </div>
+        `);
+    }
+
     storageSessionsDropdown.innerHTML = `
         <div class="storage-sessions-list">
-            ${rows.map((session) => `
-                <div class="storage-session-item">
-                    <span class="storage-session-name">${session.name}</span>
-                    <span class="storage-session-count">${session.photoCount} foto${session.photoCount === 1 ? '' : 's'}</span>
-                </div>
-            `).join('')}
+            ${renderedRows.join('')}
         </div>
     `;
+
+    const orphanToggle = storageSessionsDropdown.querySelector('[data-orphan-toggle]');
+    const orphanList = storageSessionsDropdown.querySelector('.storage-orphan-list');
+    if (orphanToggle && orphanList) {
+        const toggleOrphans = (event) => {
+            event.stopPropagation();
+            const isOpen = !orphanList.hidden;
+            orphanList.hidden = isOpen;
+            orphanToggle.setAttribute('aria-expanded', String(!isOpen));
+            orphanToggle.classList.toggle('is-expanded', !isOpen);
+        };
+        orphanToggle.addEventListener('click', toggleOrphans);
+        orphanToggle.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleOrphans(event);
+            }
+        });
+    }
+
+    const galleryBtn = storageSessionsDropdown.querySelector('#storageOrphanGalleryBtn');
+    if (galleryBtn) {
+        galleryBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openOrphanGallery(orphanFiles, orphanCount, orphanBytes);
+        });
+    }
+}
+
+const ORPHAN_GALLERY_PAGE_SIZE = 50;
+let orphanGalleryState = {
+    files: [],
+    page: 0,
+    totalCount: 0,
+    totalBytes: 0,
+    selected: new Set()
+};
+
+function buildPencilLoaderSVG(uniqueId) {
+    return `
+        <svg xmlns="http://www.w3.org/2000/svg" height="60" width="60" viewBox="0 0 200 200" class="image-pencil-loader">
+            <defs>
+                <clipPath id="pencil-eraser-${uniqueId}">
+                    <rect height="30" width="30" ry="5" rx="5"></rect>
+                </clipPath>
+            </defs>
+            <circle transform="rotate(-113,100,100)" stroke-linecap="round" stroke-dashoffset="439.82" stroke-dasharray="439.82 439.82" stroke-width="2" stroke="#111111" fill="none" r="70" class="image-pencil-loader__stroke"></circle>
+            <g transform="translate(100,100)" class="image-pencil-loader__rotate">
+                <g fill="none">
+                    <circle transform="rotate(-90)" stroke-dashoffset="402" stroke-dasharray="402.12 402.12" stroke-width="30" stroke="hsl(223,90%,50%)" r="64" class="image-pencil-loader__body1"></circle>
+                    <circle transform="rotate(-90)" stroke-dashoffset="465" stroke-dasharray="464.96 464.96" stroke-width="10" stroke="hsl(223,90%,60%)" r="74" class="image-pencil-loader__body2"></circle>
+                    <circle transform="rotate(-90)" stroke-dashoffset="339" stroke-dasharray="339.29 339.29" stroke-width="10" stroke="hsl(223,90%,40%)" r="54" class="image-pencil-loader__body3"></circle>
+                </g>
+                <g transform="rotate(-90) translate(49,0)" class="image-pencil-loader__eraser">
+                    <g class="image-pencil-loader__eraser-skew">
+                        <rect height="30" width="30" ry="5" rx="5" fill="hsl(223,90%,70%)"></rect>
+                        <rect clip-path="url(#pencil-eraser-${uniqueId})" height="30" width="5" fill="hsl(223,90%,60%)"></rect>
+                        <rect height="20" width="30" fill="hsl(223,10%,90%)"></rect>
+                        <rect height="20" width="15" fill="hsl(223,10%,70%)"></rect>
+                        <rect height="20" width="5" fill="hsl(223,10%,80%)"></rect>
+                        <rect height="2" width="30" y="6" fill="hsla(223,10%,10%,0.2)"></rect>
+                        <rect height="2" width="30" y="13" fill="hsla(223,10%,10%,0.2)"></rect>
+                    </g>
+                </g>
+                <g transform="rotate(-90) translate(49,-30)" class="image-pencil-loader__point">
+                    <polygon points="15 0,30 30,0 30" fill="hsl(33,90%,70%)"></polygon>
+                    <polygon points="15 0,6 30,0 30" fill="hsl(33,90%,50%)"></polygon>
+                    <polygon points="15 0,20 10,10 10" fill="hsl(223,10%,10%)"></polygon>
+                </g>
+            </g>
+        </svg>
+    `;
+}
+
+async function openOrphanGallery(files, totalCount, totalBytes) {
+    if (!Array.isArray(files) || files.length === 0) return;
+    const bridge = window.directSupabaseBridge;
+    if (!bridge?.getStorageFileUrl) return;
+
+    orphanGalleryState = {
+        files: files.slice(),
+        page: 0,
+        totalCount: Number(totalCount || files.length),
+        totalBytes: Number(totalBytes || 0),
+        selected: new Set()
+    };
+
+    let modal = document.getElementById('orphanGalleryModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'orphanGalleryModal';
+        modal.className = 'orphan-gallery-modal';
+        modal.innerHTML = `
+            <div class="orphan-gallery-backdrop" data-close="true"></div>
+            <div class="orphan-gallery-panel" role="dialog" aria-modal="true">
+                <div class="orphan-gallery-header">
+                    <div>
+                        <h3 class="orphan-gallery-title">Archivos sin uso</h3>
+                        <p class="orphan-gallery-subtitle" id="orphanGallerySubtitle"></p>
+                    </div>
+                    <button type="button" class="orphan-gallery-close" data-close="true" aria-label="Cerrar">×</button>
+                </div>
+                <div class="orphan-gallery-toolbar">
+                    <div class="orphan-toolbar-group orphan-toolbar-selection">
+                        <button type="button" class="orphan-pill orphan-pill-ghost" id="orphanSelectPage" title="Marcar/desmarcar todas las cards visibles">
+                            <span class="orphan-pill-icon">▦</span>
+                            <span class="orphan-pill-label">Página</span>
+                        </button>
+                        <button type="button" class="orphan-pill orphan-pill-ghost" id="orphanSelectAll" title="Marcar/desmarcar todos los archivos del modal">
+                            <span class="orphan-pill-icon">✓</span>
+                            <span class="orphan-pill-label">Todos</span>
+                        </button>
+                        <button type="button" class="orphan-pill orphan-pill-ghost" id="orphanClearSelection" title="Quitar selección">
+                            <span class="orphan-pill-icon">✕</span>
+                            <span class="orphan-pill-label">Limpiar</span>
+                        </button>
+                    </div>
+                    <div class="orphan-toolbar-counter" id="orphanSelectionCount">
+                        <span class="orphan-counter-number">0</span>
+                        <span class="orphan-counter-label">seleccionados</span>
+                    </div>
+                    <div class="orphan-toolbar-group orphan-toolbar-actions">
+                        <button type="button" class="orphan-pill orphan-pill-recover" id="orphanRecoverSelected" disabled title="Recuperar archivos seleccionados a una sesión">
+                            <span class="orphan-pill-icon">↺</span>
+                            <span class="orphan-pill-label">Recuperar</span>
+                        </button>
+                        <button type="button" class="orphan-pill orphan-pill-danger" id="orphanDeleteSelected" disabled title="Eliminar los archivos seleccionados">
+                            <span class="orphan-pill-icon">🗑</span>
+                            <span class="orphan-pill-label">Eliminar</span>
+                        </button>
+                        <button type="button" class="orphan-pill orphan-pill-danger-strong" id="orphanDeleteAll" title="Eliminar TODOS los archivos sin uso del modal">
+                            <span class="orphan-pill-icon">⚠</span>
+                            <span class="orphan-pill-label">Eliminar todos</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="orphan-gallery-grid" id="orphanGalleryGrid"></div>
+                <div class="orphan-gallery-pagination" id="orphanGalleryPagination"></div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close="true"]')) modal.classList.remove('is-open');
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                const lightbox = document.getElementById('orphanLightbox');
+                if (lightbox && lightbox.classList.contains('is-open')) {
+                    lightbox.classList.remove('is-open');
+                    return;
+                }
+                modal.classList.remove('is-open');
+            }
+        });
+
+        modal.querySelector('#orphanSelectPage').addEventListener('click', () => toggleSelectCurrentPage());
+        modal.querySelector('#orphanSelectAll').addEventListener('click', () => toggleSelectAll());
+        modal.querySelector('#orphanClearSelection').addEventListener('click', () => {
+            orphanGalleryState.selected.clear();
+            renderOrphanGalleryPage();
+        });
+        modal.querySelector('#orphanDeleteSelected').addEventListener('click', () => bulkOrphanDelete());
+        modal.querySelector('#orphanDeleteAll').addEventListener('click', () => deleteAllOrphans());
+        modal.querySelector('#orphanRecoverSelected').addEventListener('click', () => bulkOrphanRecover());
+    }
+
+    modal.classList.add('is-open');
+    await renderOrphanGalleryPage();
+}
+
+function toggleSelectCurrentPage() {
+    const { files, page, selected } = orphanGalleryState;
+    const start = page * ORPHAN_GALLERY_PAGE_SIZE;
+    const end = Math.min(start + ORPHAN_GALLERY_PAGE_SIZE, files.length);
+    const pagePaths = files.slice(start, end).map((f) => f.storagePath);
+    const allSelected = pagePaths.every((p) => selected.has(p));
+    if (allSelected) pagePaths.forEach((p) => selected.delete(p));
+    else pagePaths.forEach((p) => selected.add(p));
+    renderOrphanGalleryPage();
+}
+
+function toggleSelectAll() {
+    // Por seguridad, "Seleccionar todos" actúa solo sobre la página visible
+    // (igual que "Seleccionar página") para no marcar archivos no visibles.
+    toggleSelectCurrentPage();
+}
+
+async function renderOrphanGalleryPage() {
+    const modal = document.getElementById('orphanGalleryModal');
+    if (!modal) return;
+    const bridge = window.directSupabaseBridge;
+    if (!bridge?.getStorageFileUrl) return;
+
+    const { files, page, totalCount, totalBytes, selected } = orphanGalleryState;
+    const totalPages = Math.max(1, Math.ceil(files.length / ORPHAN_GALLERY_PAGE_SIZE));
+    const safePage = Math.min(Math.max(0, page), totalPages - 1);
+    orphanGalleryState.page = safePage;
+
+    const start = safePage * ORPHAN_GALLERY_PAGE_SIZE;
+    const end = Math.min(start + ORPHAN_GALLERY_PAGE_SIZE, files.length);
+    const pageFiles = files.slice(start, end);
+
+    const subtitle = modal.querySelector('#orphanGallerySubtitle');
+    const grid = modal.querySelector('#orphanGalleryGrid');
+    const pagination = modal.querySelector('#orphanGalleryPagination');
+    const selectionCount = modal.querySelector('#orphanSelectionCount');
+    const deleteSelectedBtn = modal.querySelector('#orphanDeleteSelected');
+    const recoverSelectedBtn = modal.querySelector('#orphanRecoverSelected');
+
+    if (subtitle) {
+        const extra = Math.max(0, totalCount - files.length);
+        subtitle.textContent = files.length > 0
+            ? `Mostrando ${start + 1}–${end} de ${files.length}${extra > 0 ? ` (${extra} no listados)` : ''} · ${formatBytes(totalBytes)}`
+            : 'No quedan archivos sin uso.';
+    }
+
+    updateSelectionUI();
+    if (deleteSelectedBtn) deleteSelectedBtn.disabled = selected.size === 0;
+    if (recoverSelectedBtn) recoverSelectedBtn.disabled = selected.size === 0;
+
+    if (grid) {
+        if (pageFiles.length === 0) {
+            grid.innerHTML = `<div class="orphan-gallery-empty">No quedan archivos sin uso.</div>`;
+        } else {
+            grid.innerHTML = pageFiles.map((file, idx) => {
+                const path = String(file?.storagePath || '');
+                const fileName = path.split('/').pop() || path;
+                const folder = path.includes('/') ? path.split('/').slice(0, -1).join('/') : '';
+                const size = Number(file?.sizeBytes || 0);
+                const isSelected = selected.has(path);
+                return `
+                    <figure class="orphan-gallery-card ${isSelected ? 'is-selected' : ''}" data-orphan-path="${path}">
+                        <label class="orphan-card-checkbox" title="Seleccionar">
+                            <input type="checkbox" data-orphan-select="${path}" ${isSelected ? 'checked' : ''}>
+                            <span class="orphan-card-checkmark"></span>
+                        </label>
+                        <span class="orphan-gallery-size-badge">${formatBytes(size)}</span>
+                        ${folder ? `<span class="orphan-gallery-folder-badge">${folder}</span>` : ''}
+                        <div class="orphan-gallery-img-wrap">
+                            <div class="orphan-gallery-loading">${buildPencilLoaderSVG(`orphan-${start + idx}`)}</div>
+                        </div>
+                        <div class="orphan-card-actions">
+                            <button type="button" class="orphan-card-action orphan-action-expand" data-orphan-expand="${path}" title="Ver pantalla completa">⛶</button>
+                            <button type="button" class="orphan-card-action orphan-action-recover" data-orphan-recover="${path}" title="Recuperar a una sesión">↺</button>
+                            <button type="button" class="orphan-card-action orphan-action-delete" data-orphan-delete="${path}" title="Eliminar archivo">🗑️</button>
+                        </div>
+                        <figcaption class="orphan-gallery-caption" title="${path}">${fileName}</figcaption>
+                    </figure>
+                `;
+            }).join('');
+        }
+    }
+
+    if (pagination) {
+        pagination.innerHTML = renderOrphanPaginationControls(safePage, totalPages);
+        pagination.querySelectorAll('[data-page]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const target = Number(btn.getAttribute('data-page'));
+                if (Number.isFinite(target)) {
+                    orphanGalleryState.page = target;
+                    renderOrphanGalleryPage();
+                }
+            });
+        });
+    }
+
+    const cards = modal.querySelectorAll('.orphan-gallery-card');
+    cards.forEach(async (card) => {
+        const path = card.getAttribute('data-orphan-path');
+        if (!path) return;
+        try {
+            const url = await bridge.getStorageFileUrl(path);
+            const wrap = card.querySelector('.orphan-gallery-img-wrap');
+            if (wrap && url) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.alt = path;
+                img.loading = 'lazy';
+                img.addEventListener('load', () => {
+                    const loading = wrap.querySelector('.orphan-gallery-loading');
+                    if (loading) loading.remove();
+                });
+                img.addEventListener('error', () => {
+                    const loading = wrap.querySelector('.orphan-gallery-loading');
+                    if (loading) loading.innerHTML = '<span class="orphan-gallery-error">Sin vista previa</span>';
+                });
+                img.dataset.fullUrl = url;
+                wrap.appendChild(img);
+            }
+        } catch (_) {
+            const wrap = card.querySelector('.orphan-gallery-img-wrap');
+            const loading = wrap?.querySelector('.orphan-gallery-loading');
+            if (loading) loading.innerHTML = '<span class="orphan-gallery-error">No se pudo cargar</span>';
+        }
+    });
+
+    modal.querySelectorAll('[data-orphan-select]').forEach((checkbox) => {
+        checkbox.addEventListener('change', (event) => {
+            event.stopPropagation();
+            const path = checkbox.getAttribute('data-orphan-select');
+            if (checkbox.checked) orphanGalleryState.selected.add(path);
+            else orphanGalleryState.selected.delete(path);
+            const card = checkbox.closest('.orphan-gallery-card');
+            if (card) card.classList.toggle('is-selected', checkbox.checked);
+            updateSelectionUI();
+        });
+    });
+
+    modal.querySelectorAll('[data-orphan-expand]').forEach((btn) => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const path = btn.getAttribute('data-orphan-expand');
+            openOrphanLightbox(path);
+        });
+    });
+    modal.querySelectorAll('[data-orphan-delete]').forEach((btn) => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const path = btn.getAttribute('data-orphan-delete');
+            handleOrphanDelete(path, btn);
+        });
+    });
+    modal.querySelectorAll('[data-orphan-recover]').forEach((btn) => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const path = btn.getAttribute('data-orphan-recover');
+            openOrphanRecoverDialog([path]);
+        });
+    });
+}
+
+function updateSelectionUI() {
+    const modal = document.getElementById('orphanGalleryModal');
+    if (!modal) return;
+    const { files, selected } = orphanGalleryState;
+    const selectionCount = modal.querySelector('#orphanSelectionCount');
+    const deleteSelectedBtn = modal.querySelector('#orphanDeleteSelected');
+    const recoverSelectedBtn = modal.querySelector('#orphanRecoverSelected');
+    const selectedSize = files.reduce((sum, f) => selected.has(f.storagePath) ? sum + Number(f.sizeBytes || 0) : sum, 0);
+
+    if (selectionCount) {
+        const numberEl = selectionCount.querySelector('.orphan-counter-number');
+        const labelEl = selectionCount.querySelector('.orphan-counter-label');
+        if (numberEl) numberEl.textContent = String(selected.size);
+        if (labelEl) {
+            labelEl.textContent = selected.size === 0
+                ? 'sin selección'
+                : selected.size === 1
+                    ? `archivo · ${formatBytes(selectedSize)}`
+                    : `archivos · ${formatBytes(selectedSize)}`;
+        }
+        selectionCount.classList.toggle('is-active', selected.size > 0);
+    }
+    if (deleteSelectedBtn) deleteSelectedBtn.disabled = selected.size === 0;
+    if (recoverSelectedBtn) recoverSelectedBtn.disabled = selected.size === 0;
+}
+
+async function openOrphanLightbox(storagePath) {
+    const bridge = window.directSupabaseBridge;
+    if (!bridge?.getStorageFileUrl) return;
+    let lightbox = document.getElementById('orphanLightbox');
+    if (!lightbox) {
+        lightbox = document.createElement('div');
+        lightbox.id = 'orphanLightbox';
+        lightbox.className = 'orphan-lightbox';
+        lightbox.innerHTML = `
+            <button type="button" class="orphan-lightbox-close" aria-label="Cerrar">×</button>
+            <div class="orphan-lightbox-loading">${buildPencilLoaderSVG('lightbox')}</div>
+            <img class="orphan-lightbox-img" alt="">
+        `;
+        document.body.appendChild(lightbox);
+        lightbox.addEventListener('click', (event) => {
+            if (event.target === lightbox || event.target.classList.contains('orphan-lightbox-close')) {
+                lightbox.classList.remove('is-open');
+            }
+        });
+    }
+    const img = lightbox.querySelector('.orphan-lightbox-img');
+    const loading = lightbox.querySelector('.orphan-lightbox-loading');
+    img.style.display = 'none';
+    loading.style.display = 'flex';
+    lightbox.classList.add('is-open');
+    try {
+        const url = await bridge.getStorageFileUrl(storagePath);
+        img.onload = () => {
+            loading.style.display = 'none';
+            img.style.display = 'block';
+        };
+        img.src = url;
+        img.alt = storagePath;
+    } catch (_) {
+        loading.innerHTML = '<span class="orphan-gallery-error">No se pudo cargar</span>';
+    }
+}
+
+function renderOrphanPaginationControls(currentPage, totalPages) {
+    if (totalPages <= 1) return '';
+    const buttons = [];
+    buttons.push(`<button type="button" data-page="${Math.max(0, currentPage - 1)}" ${currentPage === 0 ? 'disabled' : ''} class="orphan-pag-btn">‹ Anterior</button>`);
+
+    const windowSize = 5;
+    let from = Math.max(0, currentPage - Math.floor(windowSize / 2));
+    let to = Math.min(totalPages, from + windowSize);
+    from = Math.max(0, to - windowSize);
+
+    if (from > 0) {
+        buttons.push(`<button type="button" data-page="0" class="orphan-pag-num">1</button>`);
+        if (from > 1) buttons.push(`<span class="orphan-pag-dots">…</span>`);
+    }
+    for (let i = from; i < to; i++) {
+        buttons.push(`<button type="button" data-page="${i}" class="orphan-pag-num ${i === currentPage ? 'is-active' : ''}">${i + 1}</button>`);
+    }
+    if (to < totalPages) {
+        if (to < totalPages - 1) buttons.push(`<span class="orphan-pag-dots">…</span>`);
+        buttons.push(`<button type="button" data-page="${totalPages - 1}" class="orphan-pag-num">${totalPages}</button>`);
+    }
+
+    buttons.push(`<button type="button" data-page="${Math.min(totalPages - 1, currentPage + 1)}" ${currentPage >= totalPages - 1 ? 'disabled' : ''} class="orphan-pag-btn">Siguiente ›</button>`);
+    return buttons.join('');
+}
+
+function showConfirmDialog({ title, message, confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false, requireType = null, icon = null } = {}) {
+    return new Promise((resolve) => {
+        let dialog = document.getElementById('appConfirmDialog');
+        if (!dialog) {
+            dialog = document.createElement('div');
+            dialog.id = 'appConfirmDialog';
+            dialog.className = 'app-confirm-dialog';
+            dialog.innerHTML = `
+                <div class="app-confirm-backdrop" data-confirm-action="cancel"></div>
+                <div class="app-confirm-panel" role="dialog" aria-modal="true">
+                    <div class="app-confirm-icon" id="appConfirmIcon"></div>
+                    <h3 class="app-confirm-title" id="appConfirmTitle"></h3>
+                    <p class="app-confirm-message" id="appConfirmMessage"></p>
+                    <div class="app-confirm-typebox" id="appConfirmTypeBox" hidden>
+                        <label class="app-confirm-typelabel" id="appConfirmTypeLabel"></label>
+                        <input type="text" class="app-confirm-typeinput" id="appConfirmTypeInput" autocomplete="off">
+                    </div>
+                    <div class="app-confirm-actions">
+                        <button type="button" class="app-confirm-btn app-confirm-cancel" data-confirm-action="cancel" id="appConfirmCancelBtn"></button>
+                        <button type="button" class="app-confirm-btn app-confirm-ok" data-confirm-action="ok" id="appConfirmOkBtn"></button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(dialog);
+        }
+
+        const titleEl = dialog.querySelector('#appConfirmTitle');
+        const msgEl = dialog.querySelector('#appConfirmMessage');
+        const iconEl = dialog.querySelector('#appConfirmIcon');
+        const okBtn = dialog.querySelector('#appConfirmOkBtn');
+        const cancelBtn = dialog.querySelector('#appConfirmCancelBtn');
+        const typeBox = dialog.querySelector('#appConfirmTypeBox');
+        const typeLabel = dialog.querySelector('#appConfirmTypeLabel');
+        const typeInput = dialog.querySelector('#appConfirmTypeInput');
+
+        titleEl.textContent = title || '¿Continuar?';
+        msgEl.innerHTML = message || '';
+        iconEl.textContent = icon || (danger ? '⚠️' : '❓');
+        iconEl.className = `app-confirm-icon ${danger ? 'is-danger' : ''}`;
+        okBtn.textContent = confirmText;
+        cancelBtn.textContent = cancelText;
+        okBtn.className = `app-confirm-btn app-confirm-ok ${danger ? 'is-danger' : ''}`;
+
+        if (requireType) {
+            typeBox.hidden = false;
+            typeLabel.textContent = `Escribe "${requireType}" para confirmar:`;
+            typeInput.value = '';
+            okBtn.disabled = true;
+            const checkType = () => {
+                okBtn.disabled = typeInput.value.trim() !== requireType;
+            };
+            typeInput.oninput = checkType;
+        } else {
+            typeBox.hidden = true;
+            typeInput.value = '';
+            okBtn.disabled = false;
+        }
+
+        dialog.classList.add('is-open');
+        setTimeout(() => {
+            if (requireType) typeInput.focus();
+            else okBtn.focus();
+        }, 80);
+
+        const cleanup = (result) => {
+            dialog.classList.remove('is-open');
+            okBtn.onclick = null;
+            cancelBtn.onclick = null;
+            document.removeEventListener('keydown', escHandler);
+            resolve(result);
+        };
+        const escHandler = (event) => {
+            if (event.key === 'Escape') cleanup(false);
+        };
+        document.addEventListener('keydown', escHandler);
+
+        okBtn.onclick = () => cleanup(true);
+        cancelBtn.onclick = () => cleanup(false);
+        dialog.querySelector('.app-confirm-backdrop').onclick = () => cleanup(false);
+    });
+}
+
+function animateOrphanCardsRemoval(paths) {
+    return new Promise((resolve) => {
+        const cards = paths.map((path) =>
+            document.querySelector(`.orphan-gallery-card[data-orphan-path="${CSS.escape(path)}"]`)
+        ).filter(Boolean);
+        if (cards.length === 0) return resolve();
+        cards.forEach((card, idx) => {
+            setTimeout(() => card.classList.add('is-removing'), Math.min(idx * 22, 280));
+        });
+        setTimeout(resolve, Math.min(cards.length * 22, 280) + 420);
+    });
+}
+
+function optimisticallyRemoveFromState(paths) {
+    const pathsSet = new Set(paths);
+    const removedBytes = orphanGalleryState.files.reduce(
+        (sum, f) => pathsSet.has(f.storagePath) ? sum + Number(f.sizeBytes || 0) : sum,
+        0
+    );
+    orphanGalleryState.files = orphanGalleryState.files.filter((f) => !pathsSet.has(f.storagePath));
+    orphanGalleryState.totalCount = Math.max(0, orphanGalleryState.totalCount - paths.length);
+    orphanGalleryState.totalBytes = Math.max(0, orphanGalleryState.totalBytes - removedBytes);
+    paths.forEach((p) => orphanGalleryState.selected.delete(p));
+    return removedBytes;
+}
+
+async function bulkOrphanDelete() {
+    const paths = Array.from(orphanGalleryState.selected);
+    if (paths.length === 0) return;
+    const totalSize = orphanGalleryState.files.reduce(
+        (sum, f) => paths.includes(f.storagePath) ? sum + Number(f.sizeBytes || 0) : sum,
+        0
+    );
+
+    const confirmed = await showConfirmDialog({
+        title: `¿Eliminar ${paths.length} archivo${paths.length === 1 ? '' : 's'}?`,
+        message: `Se liberarán <strong>~${formatBytes(totalSize)}</strong> de Storage.<br>Esta acción <strong>no se puede deshacer</strong>.`,
+        confirmText: 'Sí, eliminar',
+        cancelText: 'Cancelar',
+        danger: true,
+        icon: '🗑️'
+    });
+    if (!confirmed) return;
+
+    // 1. Animación inmediata
+    animateOrphanCardsRemoval(paths);
+
+    // 2. Sacar del state inmediatamente (optimista)
+    optimisticallyRemoveFromState(paths);
+
+    // 3. Re-render después de la animación con la lista ya filtrada
+    setTimeout(() => {
+        const totalPages = Math.max(1, Math.ceil(orphanGalleryState.files.length / ORPHAN_GALLERY_PAGE_SIZE));
+        orphanGalleryState.page = Math.min(orphanGalleryState.page, totalPages - 1);
+        renderOrphanGalleryPage();
+    }, 360);
+
+    showToast(`${paths.length} archivo${paths.length === 1 ? '' : 's'} eliminado${paths.length === 1 ? '' : 's'} · ${formatBytes(totalSize)} liberado${totalSize === 0 ? '' : 's'}`, 'success');
+
+    // 4. API en background (silencioso si falla solo reportar)
+    try {
+        const res = await apiFetch('/orphans/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ storagePaths: paths })
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result?.error || 'Error');
+        // Refrescar tarjeta de uso de espacio (sin re-renderizar la galería)
+        fetchStorageUsage();
+    } catch (error) {
+        showToast(`Error de fondo al borrar: ${error.message}. Recargando...`, 'error');
+        await refreshOrphanGalleryData();
+    }
+}
+
+async function deleteAllOrphans() {
+    const all = orphanGalleryState.files.map((f) => f.storagePath);
+    if (all.length === 0) return;
+    const totalBytes = orphanGalleryState.totalBytes;
+
+    const confirmed = await showConfirmDialog({
+        title: `⚠️ Eliminar TODOS los archivos`,
+        message: `Esto elimina <strong>los ${all.length} archivos</strong> sin uso en <strong>TODAS las páginas</strong>.<br>Se liberarán <strong>~${formatBytes(totalBytes)}</strong>.<br><br>Esta acción <strong>NO se puede deshacer</strong>. Escribe la palabra exacta para confirmar.`,
+        confirmText: `Eliminar los ${all.length}`,
+        cancelText: 'Cancelar',
+        danger: true,
+        icon: '⚠️',
+        requireType: 'ELIMINAR'
+    });
+    if (!confirmed) {
+        showToast('Cancelado.', 'info');
+        return;
+    }
+
+    // 1. Animar las cards visibles (no podemos animar las de otras páginas)
+    const { page } = orphanGalleryState;
+    const start = page * ORPHAN_GALLERY_PAGE_SIZE;
+    const end = Math.min(start + ORPHAN_GALLERY_PAGE_SIZE, orphanGalleryState.files.length);
+    const visiblePaths = orphanGalleryState.files.slice(start, end).map((f) => f.storagePath);
+    animateOrphanCardsRemoval(visiblePaths);
+
+    // 2. Limpiar TODO el state (optimista)
+    orphanGalleryState.files = [];
+    orphanGalleryState.totalCount = 0;
+    orphanGalleryState.totalBytes = 0;
+    orphanGalleryState.selected.clear();
+    orphanGalleryState.page = 0;
+
+    // 3. Re-render después de la animación → vacío
+    setTimeout(() => renderOrphanGalleryPage(), 380);
+
+    showToast(`Eliminando ${all.length} archivos en lotes...`, 'info');
+
+    // 4. API en background con lotes
+    try {
+        const batchSize = 200;
+        let totalDeleted = 0;
+        for (let i = 0; i < all.length; i += batchSize) {
+            const batch = all.slice(i, i + batchSize);
+            const res = await apiFetch('/orphans/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ storagePaths: batch })
+            });
+            const result = await res.json();
+            if (res.ok && Number.isFinite(result?.deleted)) {
+                totalDeleted += result.deleted;
+            }
+        }
+        showToast(`✓ ${totalDeleted} archivos eliminados · ${formatBytes(totalBytes)} liberados`, 'success');
+        fetchStorageUsage();
+    } catch (error) {
+        showToast(`Error al eliminar masivo: ${error.message}`, 'error');
+        await refreshOrphanGalleryData();
+    }
+}
+
+async function bulkOrphanRecover() {
+    const paths = Array.from(orphanGalleryState.selected);
+    if (paths.length === 0) return;
+    openOrphanRecoverDialog(paths);
+}
+
+async function openOrphanRecoverDialog(storagePaths) {
+    if (!Array.isArray(storagePaths) || storagePaths.length === 0) return;
+
+    // Asegurar lista de sesiones cargada
+    if (!Array.isArray(sessionSummaries) || sessionSummaries.length === 0) {
+        try {
+            if (typeof loadSessionList === 'function') await loadSessionList(currentSessionName || '');
+        } catch (_) {}
+    }
+
+    const isSingle = storagePaths.length === 1;
+    const totalSize = orphanGalleryState.files.reduce(
+        (sum, f) => storagePaths.includes(f.storagePath) ? sum + Number(f.sizeBytes || 0) : sum,
+        0
+    );
+
+    let dialog = document.getElementById('orphanRecoverDialog');
+    if (dialog) dialog.remove();
+    dialog = document.createElement('div');
+    dialog.id = 'orphanRecoverDialog';
+    dialog.className = 'orphan-recover-dialog';
+
+    const sessions = Array.isArray(sessionSummaries) ? sessionSummaries.slice() : [];
+    sessions.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
+    const sessionsListHTML = sessions.length > 0
+        ? sessions.map((s) => `
+            <button type="button" class="recover-session-item ${s.name === currentSessionName ? 'is-active' : ''}" data-session-name="${s.name.replace(/"/g, '&quot;')}">
+                <span class="recover-session-name">${s.name}</span>
+                <span class="recover-session-photos">${s.photoCount || 0} foto${(s.photoCount === 1) ? '' : 's'}${s.name === currentSessionName ? ' · activa' : ''}</span>
+            </button>
+        `).join('')
+        : '<div class="recover-empty-sessions">No tienes sesiones guardadas todavía.</div>';
+
+    dialog.innerHTML = `
+        <div class="orphan-recover-backdrop" data-close="true"></div>
+        <div class="orphan-recover-panel orphan-recover-panel-wide" role="dialog" aria-modal="true">
+            <div class="recover-header">
+                <div class="recover-header-icon">↺</div>
+                <div>
+                    <h3 class="recover-title">${isSingle ? 'Recuperar archivo' : `Recuperar ${storagePaths.length} archivos`}</h3>
+                    <p class="recover-subtitle">${formatBytes(totalSize)} · elige una sesión destino</p>
+                </div>
+            </div>
+
+            <div class="recover-section">
+                <label class="recover-section-label">Elige sesión existente</label>
+                <div class="recover-sessions-list" id="recoverSessionsList">${sessionsListHTML}</div>
+            </div>
+
+            <div class="recover-divider"><span>o crea una nueva</span></div>
+
+            <div class="recover-section">
+                <label class="recover-section-label" for="recoverNewName">Nombre de la nueva sesión</label>
+                <input type="text" id="recoverNewName" class="recover-input" placeholder="Ej. Inspección julio">
+            </div>
+
+            ${isSingle ? `
+                <div class="recover-options-box" id="recoverOptionsBox" hidden>
+                    <div class="recover-options-header">
+                        Opciones avanzadas
+                        <span class="recover-options-target" id="recoverOptionsTarget"></span>
+                    </div>
+                    <div class="recover-options-row">
+                        <label class="recover-section-label" for="recoverPosition">
+                            Posición <span class="recover-optional">(opcional, por defecto al final)</span>
+                        </label>
+                        <input type="number" id="recoverPosition" class="recover-input recover-input-small" placeholder="ej. 1, 20, ...">
+                        <div class="recover-position-hint" id="recoverPositionHint"></div>
+                    </div>
+                    <div class="recover-options-row">
+                        <label class="recover-section-label" for="recoverDescription">
+                            Descripción <span class="recover-optional">(opcional)</span>
+                        </label>
+                        <textarea id="recoverDescription" class="recover-textarea" placeholder="Texto que aparecerá debajo de la foto..." rows="2"></textarea>
+                    </div>
+                </div>
+            ` : ''}
+
+            <div class="recover-footer">
+                <button type="button" class="recover-btn-cancel" data-close="true">Cancelar</button>
+                <button type="button" class="recover-btn-confirm" id="recoverConfirmBtn" disabled>
+                    <span class="recover-btn-confirm-text">Selecciona una sesión</span>
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+
+    let selectedSession = null;
+    let isNewSession = false;
+
+    const sessionsList = dialog.querySelector('#recoverSessionsList');
+    const newNameInput = dialog.querySelector('#recoverNewName');
+    const confirmBtn = dialog.querySelector('#recoverConfirmBtn');
+    const confirmText = dialog.querySelector('.recover-btn-confirm-text');
+    const optionsBox = dialog.querySelector('#recoverOptionsBox');
+    const optionsTarget = dialog.querySelector('#recoverOptionsTarget');
+    const positionInput = dialog.querySelector('#recoverPosition');
+    const positionHint = dialog.querySelector('#recoverPositionHint');
+    const descriptionInput = dialog.querySelector('#recoverDescription');
+
+    function updateConfirmButton() {
+        if (!selectedSession && !isNewSession) {
+            confirmBtn.disabled = true;
+            confirmText.textContent = 'Selecciona una sesión';
+            return;
+        }
+        confirmBtn.disabled = false;
+        const target = selectedSession || newNameInput.value.trim();
+        confirmText.textContent = isSingle
+            ? `Recuperar en "${target}"`
+            : `Recuperar ${storagePaths.length} en "${target}"`;
+    }
+
+    function showOptionsFor(sessionName, isNew) {
+        if (!isSingle || !optionsBox) return;
+        optionsBox.hidden = false;
+        if (optionsTarget) {
+            optionsTarget.textContent = isNew ? `Nueva sesión "${sessionName}"` : `Sesión "${sessionName}"`;
+        }
+        // Photo count
+        let count = 0;
+        if (!isNew) {
+            const found = sessions.find((s) => s.name === sessionName);
+            count = Number(found?.photoCount || 0);
+        }
+        if (positionHint) {
+            positionHint.textContent = isNew
+                ? 'La nueva sesión está vacía. Por defecto será la foto 1.'
+                : count === 0
+                    ? 'La sesión está vacía. Por defecto será la foto 1.'
+                    : `Esta sesión tiene ${count} foto${count === 1 ? '' : 's'}. Puedes elegir entre 1 y ${count + 1}.`;
+        }
+        if (positionInput) {
+            positionInput.min = '1';
+            positionInput.max = String((count || 0) + 1);
+            positionInput.value = '';
+        }
+    }
+
+    if (sessionsList) {
+        sessionsList.querySelectorAll('[data-session-name]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                sessionsList.querySelectorAll('[data-session-name]').forEach((b) => b.classList.remove('is-selected'));
+                btn.classList.add('is-selected');
+                selectedSession = btn.getAttribute('data-session-name');
+                isNewSession = false;
+                newNameInput.value = '';
+                showOptionsFor(selectedSession, false);
+                updateConfirmButton();
+            });
+        });
+    }
+
+    newNameInput.addEventListener('input', () => {
+        const name = newNameInput.value.trim();
+        if (name.length > 0) {
+            // Si coincide con una existente, comportarse como existente
+            const match = sessions.find((s) => s.name === name);
+            if (match) {
+                selectedSession = match.name;
+                isNewSession = false;
+            } else {
+                selectedSession = name;
+                isNewSession = true;
+            }
+            sessionsList?.querySelectorAll('[data-session-name]').forEach((b) => b.classList.remove('is-selected'));
+            showOptionsFor(selectedSession, isNewSession && !match);
+        } else {
+            selectedSession = null;
+            isNewSession = false;
+            if (optionsBox) optionsBox.hidden = true;
+        }
+        updateConfirmButton();
+    });
+
+    confirmBtn.addEventListener('click', async () => {
+        if (!selectedSession) return;
+        const payload = { storagePaths, sessionName: selectedSession };
+        if (isSingle) {
+            if (positionInput && positionInput.value) {
+                const pos = parseInt(positionInput.value, 10);
+                if (Number.isFinite(pos) && pos > 0) payload.position = pos;
+            }
+            if (descriptionInput && descriptionInput.value.trim()) {
+                payload.description = descriptionInput.value.trim();
+            }
+        }
+        await performOrphanRecover(payload, dialog);
+    });
+
+    dialog.addEventListener('click', (event) => {
+        if (event.target.closest('[data-close="true"]')) dialog.classList.remove('is-open');
+    });
+
+    requestAnimationFrame(() => {
+        dialog.classList.add('is-open');
+        // Si hay sesión activa, pre-seleccionarla
+        if (currentSessionName) {
+            const activeBtn = sessionsList?.querySelector(`[data-session-name="${currentSessionName.replace(/"/g, '&quot;')}"]`);
+            if (activeBtn) activeBtn.click();
+        }
+    });
+}
+
+async function performOrphanRecover(payload, dialog) {
+    const { storagePaths, sessionName } = payload;
+    if (!storagePaths?.length || !sessionName) return;
+    showToast(`Recuperando ${storagePaths.length} archivo${storagePaths.length === 1 ? '' : 's'} a "${sessionName}"...`, 'info');
+    try {
+        const res = await apiFetch('/orphans/recover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result?.error || 'Error al recuperar');
+        const noun = result.recovered === 1 ? 'archivo recuperado' : 'archivos recuperados';
+        const newMsg = result.createdNew ? ' (sesión creada)' : '';
+        const posMsg = result.recovered === 1 && Number.isFinite(result.insertedAt)
+            ? ` en la posición ${result.insertedAt}`
+            : '';
+        showToast(`${result.recovered} ${noun}${posMsg} en "${result.sessionName}"${newMsg}.`, 'success');
+        if (dialog) dialog.classList.remove('is-open');
+        orphanGalleryState.selected.clear();
+        await refreshOrphanGalleryData();
+        // Refrescar la lista de sesiones para reflejar la nueva
+        try {
+            if (typeof loadSessionList === 'function') await loadSessionList(currentSessionName || '');
+        } catch (_) {}
+    } catch (error) {
+        showToast(`No se pudo recuperar: ${error.message}`, 'error');
+    }
+}
+
+async function refreshOrphanGalleryData() {
+    await fetchStorageUsage();
+    const fresh = Array.isArray(latestStorageUsage?.orphanFiles) ? latestStorageUsage.orphanFiles : [];
+    orphanGalleryState.files = fresh;
+    orphanGalleryState.totalCount = Number(latestStorageUsage?.orphanFilesCount || fresh.length);
+    orphanGalleryState.totalBytes = Number(latestStorageUsage?.orphanBytes || 0);
+    const totalPages = Math.max(1, Math.ceil(orphanGalleryState.files.length / ORPHAN_GALLERY_PAGE_SIZE));
+    orphanGalleryState.page = Math.min(orphanGalleryState.page, totalPages - 1);
+    renderOrphanGalleryPage();
+}
+
+async function handleOrphanDelete(storagePath, buttonEl) {
+    if (!storagePath) return;
+    const fileName = storagePath.split('/').pop() || storagePath;
+
+    const confirmed = await showConfirmDialog({
+        title: '¿Eliminar este archivo?',
+        message: `<code class="app-confirm-code">${fileName}</code><br>Se borrará permanentemente de Storage.<br><strong>No se puede deshacer.</strong>`,
+        confirmText: 'Sí, eliminar',
+        cancelText: 'Cancelar',
+        danger: true,
+        icon: '🗑️'
+    });
+    if (!confirmed) return;
+
+    // 1. Animación
+    const card = document.querySelector(`.orphan-gallery-card[data-orphan-path="${CSS.escape(storagePath)}"]`);
+    const sizeBadge = card?.querySelector('.orphan-gallery-size-badge')?.textContent || '';
+    card?.classList.add('is-removing');
+
+    // 2. Optimista
+    optimisticallyRemoveFromState([storagePath]);
+    setTimeout(() => {
+        const totalPages = Math.max(1, Math.ceil(orphanGalleryState.files.length / ORPHAN_GALLERY_PAGE_SIZE));
+        orphanGalleryState.page = Math.min(orphanGalleryState.page, totalPages - 1);
+        renderOrphanGalleryPage();
+    }, 320);
+
+    showToast(`Archivo eliminado${sizeBadge ? ` · ${sizeBadge} liberado` : ''}`, 'success');
+
+    // 3. API en background
+    try {
+        const res = await apiFetch('/orphans/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ storagePaths: [storagePath] })
+        });
+        const result = await res.json();
+        if (!res.ok || !Number.isFinite(result?.deleted)) {
+            throw new Error(result?.error || 'No se pudo borrar el archivo.');
+        }
+        if (result.deleted === 0) {
+            showToast('El archivo estaba referenciado, no se borró del Storage. Recargando...', 'info');
+            await refreshOrphanGalleryData();
+            return;
+        }
+        fetchStorageUsage();
+    } catch (error) {
+        showToast(`Error de fondo: ${error.message}. Recargando...`, 'error');
+        await refreshOrphanGalleryData();
+    }
 }
 
 if (storageUsageFiles && storageSessionsDropdown) {
@@ -1007,11 +1999,21 @@ function undoLastAction() {
 
 async function fetchStorageUsage() {
     if (!storageUsageCard) return;
+
+    // Mostrar estado de carga visible mientras llega la info
+    storageUsageCard.hidden = false;
+    storageUsageCard.classList.add('is-loading');
+    if (storageUsageMeta) storageUsageMeta.textContent = 'Calculando espacio usado...';
+    if (storageUsageDetail) storageUsageDetail.textContent = 'Consultando Supabase...';
+    if (storageUsageFiles) storageUsageFiles.textContent = 'Cargando fotos...';
+    if (storageUsageFill) storageUsageFill.style.width = '0%';
+
     try {
         const res = await apiFetch('/usage');
         if (!res.ok) {
             if (res.status >= 500) {
                 console.warn('Error servidor en /usage (5xx), ocultando storage card:', res.status);
+                storageUsageCard.classList.remove('is-loading');
                 storageUsageCard.hidden = true;
                 return;
             }
@@ -1020,17 +2022,19 @@ async function fetchStorageUsage() {
 
         const usage = await res.json();
         latestStorageUsage = usage;
-        
+
         // Manejar respuesta con error del backend
         if (usage.error || usage.method === 'error-fallback') {
             console.warn('Backend storage usage con error:', usage.error);
+            storageUsageCard.classList.remove('is-loading');
             storageUsageCard.hidden = true;
             showToast(`Storage: ${usage.error?.slice(0, 80)}...`, 'info');
             return;
         }
-        
+
         const usagePercent = Number.isFinite(usage.usagePercent) ? usage.usagePercent : 0;
         storageUsageCard.hidden = false;
+        storageUsageCard.classList.remove('is-loading');
         if (storageUsageFill) storageUsageFill.style.width = `${Math.max(4, usagePercent)}%`;
         if (storageUsageMeta) {
             storageUsageMeta.textContent = usage.filesCount > 0
@@ -1053,6 +2057,7 @@ async function fetchStorageUsage() {
         console.error('No se pudo cargar el uso de espacio:', error);
         latestStorageUsage = null;
         if (storageUsageCard) {
+            storageUsageCard.classList.remove('is-loading');
             storageUsageCard.hidden = true;
             // Toast solo si no es 5xx ya manejado arriba
             if (!error.message.includes('5')) {
