@@ -2442,25 +2442,41 @@ function handleFotoNumberChange(event) {
 
     if (!Number.isInteger(currentIdx) || !imagesData[currentIdx]) return;
 
-    if (!Number.isFinite(requested) || requested < imageStartNumber) {
-        input.value = imagesData[currentIdx].index;
+    const originalIndex = imagesData[currentIdx].index;
+    const minNum = imageStartNumber;
+    const maxNum = imageStartNumber + imagesData.length - 1;
+
+    // Número inválido: shake + restaurar valor original con animación
+    if (!Number.isFinite(requested) || requested < minNum || requested > maxNum) {
+        input.classList.remove('is-invalid');
+        // Trigger reflow para reiniciar la animación si ya estaba aplicada
+        void input.offsetWidth;
+        input.classList.add('is-invalid');
+        input.value = String(originalIndex);
+        showToast(`Solo hay ${imagesData.length} fotos (del ${minNum} al ${maxNum}).`, 'info');
+        setTimeout(() => input.classList.remove('is-invalid'), 700);
         return;
     }
 
-    const targetIdx = Math.max(0, Math.min(imagesData.length - 1, requested - imageStartNumber));
-
+    const targetIdx = requested - imageStartNumber;
     if (targetIdx === currentIdx) {
-        input.value = imagesData[currentIdx].index;
+        input.value = String(originalIndex);
         return;
     }
 
+    input.blur();
     const previousPositions = captureGridCardPositions();
     pushUndoState('Cambiar número de foto');
 
-    // Intercambiar las dos imágenes en el array
     const temp = imagesData[currentIdx];
     imagesData[currentIdx] = imagesData[targetIdx];
     imagesData[targetIdx] = temp;
+
+    const movedImage = imagesData[targetIdx];
+    const movedUiId = ensureImageUiId(movedImage);
+
+    suppressNextGridEnterAnimation = true;
+    pendingDropCelebrateIdx = movedUiId;
 
     if (currentSessionName) {
         markSessionDirty(true);
@@ -2472,8 +2488,48 @@ function handleFotoNumberChange(event) {
 
     renderGrid();
     updateImageCounter();
-    animateGridReorderFrom(previousPositions);
+
+    // Calcular destino del scroll ANTES de aplicar el transform FLIP
+    // (si lo medimos después, getBoundingClientRect incluye el transform y centra mal)
+    let scrollTargetTop = null;
+    const movedCardEl = document.querySelector(`.image-box[data-ui-id="${movedUiId}"]`);
+    if (movedCardEl) {
+        const cardRect = movedCardEl.getBoundingClientRect();
+        const viewportH = window.innerHeight || document.documentElement.clientHeight;
+        const currentScroll = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+        const cardCenterAbs = cardRect.top + currentScroll + (cardRect.height / 2);
+        const pageHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+        const maxScrollTop = Math.max(0, pageHeight - viewportH);
+        scrollTargetTop = Math.max(0, Math.min(maxScrollTop, cardCenterAbs - (viewportH / 2)));
+    }
+
+    animateGridReorderFrom(previousPositions, { duration: 900, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+
+    // Scroll suave en paralelo a la animación de las cards (sensación unificada)
+    if (scrollTargetTop != null) {
+        setTimeout(() => smoothWindowScrollTo(scrollTargetTop, 900), 60);
+    }
+
     showToast(`Foto movida a la posición ${requested}.`, 'success');
+}
+
+function smoothWindowScrollTo(targetTop, duration = 800) {
+    const startTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    const distance = targetTop - startTop;
+    if (Math.abs(distance) < 2) return;
+
+    const startedAt = performance.now();
+    // Ease-out cubic — coincide con la curva de las cards (cubic-bezier(0.22, 1, 0.36, 1))
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
+
+    function step(now) {
+        const elapsed = now - startedAt;
+        const progress = Math.min(1, elapsed / duration);
+        const eased = ease(progress);
+        window.scrollTo(0, startTop + (distance * eased));
+        if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
 }
 
 function createImageBox(imageData, idx) {
@@ -2694,9 +2750,12 @@ function syncVisibleImageCardBindings() {
             previewImg.alt = `Imagen ${imageData.index}`;
         }
 
-        const label = box.querySelector('.image-label');
-        if (label) {
-            label.textContent = `Foto ${imageData.index}`;
+        const labelInput = box.querySelector('.image-label-input');
+        if (labelInput) {
+            labelInput.setAttribute('data-idx', String(idx));
+            if (document.activeElement !== labelInput) {
+                labelInput.value = imageData.index;
+            }
         }
 
         const textarea = box.querySelector('.description');
@@ -3112,6 +3171,8 @@ function animateGridReorderFrom(previousPositions = new Map(), options = {}) {
     if (!previousPositions || !previousPositions.size) return;
 
     const excludeUiId = options?.excludeUiId || null;
+    const duration = Number(options?.duration) || 460;
+    const easing = options?.easing || 'cubic-bezier(0.22, 1, 0.36, 1)';
 
     requestAnimationFrame(() => {
         document.querySelectorAll('.image-box[data-ui-id]').forEach((box) => {
@@ -3131,7 +3192,7 @@ function animateGridReorderFrom(previousPositions = new Map(), options = {}) {
             box.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(0.985)`;
 
             requestAnimationFrame(() => {
-                box.style.transition = 'transform 460ms cubic-bezier(0.22, 1, 0.36, 1)';
+                box.style.transition = `transform ${duration}ms ${easing}`;
                 box.style.transform = 'translate(0, 0) scale(1)';
                 box.addEventListener('transitionend', () => {
                     box.classList.remove('is-reorder-animating');

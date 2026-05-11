@@ -1760,6 +1760,24 @@ html {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
+.image-label-input.is-invalid {
+  animation: image-label-shake 0.55s cubic-bezier(.36,.07,.19,.97);
+  border-color: #ef4444 !important;
+  color: #ef4444 !important;
+  background: #fef2f2 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18) !important;
+}
+
+@keyframes image-label-shake {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(-5px); }
+  25% { transform: translateX(5px); }
+  40% { transform: translateX(-4px); }
+  55% { transform: translateX(4px); }
+  70% { transform: translateX(-2px); }
+  85% { transform: translateX(2px); }
+}
+
 .description {
   min-height: 72px !important;
   border-radius: 12px !important;
