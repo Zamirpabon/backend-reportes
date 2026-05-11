@@ -376,7 +376,12 @@
             continue;
           }
 
-          collectedObjects.push({ storagePath: currentPath, metadata });
+          collectedObjects.push({
+            storagePath: currentPath,
+            metadata,
+            createdAt: entry.created_at || null,
+            updatedAt: entry.updated_at || null
+          });
         }
 
         if (entries.length < limit) break;
@@ -387,10 +392,15 @@
     await walkBucket('');
 
     const pathToSize = new Map();
+    const pathToTimestamps = new Map();
     for (const object of collectedObjects) {
       const metadata = object.metadata || {};
       const objectSize = Number(metadata.size || metadata.bytes || metadata.fileSize || 0);
       pathToSize.set(object.storagePath, Number.isFinite(objectSize) ? objectSize : 0);
+      pathToTimestamps.set(object.storagePath, {
+        createdAt: object.createdAt || null,
+        updatedAt: object.updatedAt || null
+      });
     }
 
     const usedBytes = collectedObjects.reduce((total, object) => {
@@ -450,7 +460,13 @@
     let orphanBytes = 0;
     for (const [storagePath, size] of pathToSize.entries()) {
       if (referencedPaths.has(storagePath)) continue;
-      orphanFiles.push({ storagePath, sizeBytes: Number(size || 0) });
+      const stamps = pathToTimestamps.get(storagePath) || {};
+      orphanFiles.push({
+        storagePath,
+        sizeBytes: Number(size || 0),
+        createdAt: stamps.createdAt || null,
+        updatedAt: stamps.updatedAt || null
+      });
       orphanBytes += Number(size || 0);
     }
     orphanFiles.sort((a, b) => b.sizeBytes - a.sizeBytes);

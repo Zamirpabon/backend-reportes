@@ -668,6 +668,37 @@ let orphanGalleryState = {
     selected: new Set()
 };
 
+function formatOrphanDate(isoString) {
+    if (!isoString) return { relative: '', absolute: '' };
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return { relative: '', absolute: '' };
+
+    const now = Date.now();
+    const diffMs = now - date.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffH = Math.floor(diffMin / 60);
+    const diffD = Math.floor(diffH / 24);
+
+    let relative;
+    if (diffMin < 1) relative = 'hace instantes';
+    else if (diffMin < 60) relative = `hace ${diffMin} min`;
+    else if (diffH < 24) relative = `hace ${diffH} h`;
+    else if (diffD < 7) relative = `hace ${diffD} día${diffD === 1 ? '' : 's'}`;
+    else if (diffD < 30) relative = `hace ${Math.floor(diffD / 7)} sem`;
+    else if (diffD < 365) relative = `hace ${Math.floor(diffD / 30)} mes${Math.floor(diffD / 30) === 1 ? '' : 'es'}`;
+    else relative = `hace ${Math.floor(diffD / 365)} año${Math.floor(diffD / 365) === 1 ? '' : 's'}`;
+
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mmm = months[date.getMonth()];
+    const yyyy = date.getFullYear();
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mi = String(date.getMinutes()).padStart(2, '0');
+    const absolute = `${dd} ${mmm} ${yyyy} · ${hh}:${mi}`;
+
+    return { relative, absolute };
+}
+
 function buildPencilLoaderSVG(uniqueId) {
     return `
         <svg xmlns="http://www.w3.org/2000/svg" height="60" width="60" viewBox="0 0 200 200" class="image-pencil-loader">
@@ -860,6 +891,11 @@ async function renderOrphanGalleryPage() {
                 const folder = path.includes('/') ? path.split('/').slice(0, -1).join('/') : '';
                 const size = Number(file?.sizeBytes || 0);
                 const isSelected = selected.has(path);
+                const created = formatOrphanDate(file?.createdAt);
+                const updated = formatOrphanDate(file?.updatedAt);
+                const timeBadge = created.relative
+                    ? `<span class="orphan-gallery-time-badge" title="Subido: ${created.absolute}${updated.absolute && updated.absolute !== created.absolute ? `\nÚltima modificación: ${updated.absolute}` : ''}">⏱ ${created.relative}</span>`
+                    : '';
                 return `
                     <figure class="orphan-gallery-card ${isSelected ? 'is-selected' : ''}" data-orphan-path="${path}">
                         <label class="orphan-card-checkbox" title="Seleccionar">
@@ -868,6 +904,7 @@ async function renderOrphanGalleryPage() {
                         </label>
                         <span class="orphan-gallery-size-badge">${formatBytes(size)}</span>
                         ${folder ? `<span class="orphan-gallery-folder-badge">${folder}</span>` : ''}
+                        ${timeBadge}
                         <div class="orphan-gallery-img-wrap">
                             <div class="orphan-gallery-loading">${buildPencilLoaderSVG(`orphan-${start + idx}`)}</div>
                         </div>
@@ -876,7 +913,10 @@ async function renderOrphanGalleryPage() {
                             <button type="button" class="orphan-card-action orphan-action-recover" data-orphan-recover="${path}" title="Recuperar a una sesión">↺</button>
                             <button type="button" class="orphan-card-action orphan-action-delete" data-orphan-delete="${path}" title="Eliminar archivo">🗑️</button>
                         </div>
-                        <figcaption class="orphan-gallery-caption" title="${path}">${fileName}</figcaption>
+                        <figcaption class="orphan-gallery-caption" title="${path}${created.absolute ? `\nSubido: ${created.absolute}` : ''}">
+                            <span class="orphan-caption-name">${fileName}</span>
+                            ${created.absolute ? `<span class="orphan-caption-date">${created.absolute}</span>` : ''}
+                        </figcaption>
                     </figure>
                 `;
             }).join('');
@@ -1454,8 +1494,14 @@ async function openOrphanRecoverDialog(storagePaths) {
         updateConfirmButton();
     });
 
-    confirmBtn.addEventListener('click', async () => {
-        if (!selectedSession) return;
+    let recoverInProgress = false;
+    confirmBtn.addEventListener('click', () => {
+        if (!selectedSession || recoverInProgress) return;
+        recoverInProgress = true;
+        confirmBtn.disabled = true;
+        confirmText.textContent = 'Recuperando...';
+        confirmBtn.classList.add('is-loading');
+
         const payload = { storagePaths, sessionName: selectedSession };
         if (isSingle) {
             if (positionInput && positionInput.value) {
@@ -1466,7 +1512,10 @@ async function openOrphanRecoverDialog(storagePaths) {
                 payload.description = descriptionInput.value.trim();
             }
         }
-        await performOrphanRecover(payload, dialog);
+
+        // Cerrar diálogo inmediato y recuperar en background
+        dialog.classList.remove('is-open');
+        performOrphanRecover(payload, null).catch(() => {});
     });
 
     dialog.addEventListener('click', (event) => {
@@ -1504,10 +1553,23 @@ async function performOrphanRecover(payload, dialog) {
         if (dialog) dialog.classList.remove('is-open');
         orphanGalleryState.selected.clear();
         await refreshOrphanGalleryData();
-        // Refrescar la lista de sesiones para reflejar la nueva
         try {
             if (typeof loadSessionList === 'function') await loadSessionList(currentSessionName || '');
         } catch (_) {}
+
+        // Si recuperamos a la sesión actualmente cargada, recargarla silenciosamente
+        if (currentSessionName && result.sessionName === currentSessionName) {
+            try {
+                await loadSessionFromDB({
+                    sessionName: currentSessionName,
+                    silent: true,
+                    forceServer: true,
+                    loaderMessage: 'Actualizando sesión...'
+                });
+            } catch (reloadError) {
+                console.warn('No se pudo recargar la sesión activa tras recuperación:', reloadError);
+            }
+        }
     } catch (error) {
         showToast(`No se pudo recuperar: ${error.message}`, 'error');
     }
@@ -5120,20 +5182,36 @@ function setCropperImageSource(src, options = {}) {
 function applyCropperRotation() {
     if (!cropperImg || !cropperImg.naturalWidth || !cropperImg.naturalHeight) return;
     cropperSelectionMode = false;
-    const w = cropperImg.naturalWidth;
-    const h = cropperImg.naturalHeight;
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = h;
-    tempCanvas.height = w;
-    const tctx = tempCanvas.getContext('2d');
-    tctx.translate(h, 0);
-    tctx.rotate(Math.PI / 2);
-    tctx.drawImage(cropperImg, 0, 0, w, h);
-    setCropperImageSource(tempCanvas.toDataURL('image/png'), {
-        updateBase: true,
-        previewActive: false,
-        markChanged: true
-    });
+
+    // Si hay trazos pendientes, hornearlos antes de rotar
+    const baked = typeof markStrokes !== 'undefined' && markStrokes.length > 0 ? bakeMarkStrokes() : null;
+    const sourceImage = baked ? null : cropperImg;
+
+    const doRotate = (img) => {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = h;
+        tempCanvas.height = w;
+        const tctx = tempCanvas.getContext('2d');
+        tctx.translate(h, 0);
+        tctx.rotate(Math.PI / 2);
+        tctx.drawImage(img, 0, 0, w, h);
+        markStrokes = [];
+        setCropperImageSource(tempCanvas.toDataURL('image/png'), {
+            updateBase: true,
+            previewActive: false,
+            markChanged: true
+        });
+    };
+
+    if (baked) {
+        const bakedImg = new window.Image();
+        bakedImg.onload = () => doRotate(bakedImg);
+        bakedImg.src = baked;
+    } else if (sourceImage) {
+        doRotate(sourceImage);
+    }
 }
 
 function applyCropperSelection(autoApply = false) {
@@ -5196,6 +5274,8 @@ function openCropper(idx) {
     cropperBaseSrc = cropperOriginalSrc;
     cropperSelectionMode = false;
     cropperPreviewActive = false;
+    // Reset strokes para nueva imagen
+    if (typeof markStrokes !== 'undefined') markStrokes = [];
     cropperImg = new window.Image();
     cropperImg.onload = function() {
         cropStart = null;
@@ -5203,6 +5283,7 @@ function openCropper(idx) {
         cropperHasChanges = false;
         drawCropperImage();
         cropperModal.style.display = 'flex';
+        document.body.classList.add('has-fullscreen-overlay');
         updateCropperActionButton();
     };
     cropperImg.src = cropperOriginalSrc;
@@ -5217,6 +5298,12 @@ function drawCropperImage() {
     cropperCanvas.height = h;
     cropperCtx.clearRect(0, 0, w, h);
     cropperCtx.drawImage(cropperImg, 0, 0, w, h);
+    // Renderizar trazos pendientes (no horneados aún)
+    if (typeof markStrokes !== 'undefined' && Array.isArray(markStrokes) && markStrokes.length > 0) {
+        for (const stroke of markStrokes) {
+            renderMarkStroke(cropperCtx, stroke);
+        }
+    }
     // Dibuja el rectángulo de recorte si está activo
     if (cropStart && cropEnd && cropperSelectionMode) {
         const rx = Math.min(cropStart.x, cropEnd.x);
@@ -5303,54 +5390,74 @@ if (cropperCanvas) {
 
 async function confirmCropperChanges() {
     if (!cropperHasChanges || !imagesData[croppingIdx]) return;
-    showSaveLoader('Guardando cambios...', 'Estamos guardando el recorte de la imagen.');
-    try {
-        imagesData[croppingIdx].src = cropperImg.src;
-        imagesData[croppingIdx].imageData = cropperImg.src;
-        imagesData[croppingIdx].signedUrl = '';
-        if (imagesData[croppingIdx]._localObjectUrl) {
-            URL.revokeObjectURL(imagesData[croppingIdx]._localObjectUrl);
-            imagesData[croppingIdx]._localObjectUrl = '';
-        }
-        if (currentSessionName) {
-            markSessionDirty(true);
-        } else if (imagesData[croppingIdx]._id && !imagesData[croppingIdx]._pendingUpload) {
-            try {
-                const res = await apiFetch(`/image/${imagesData[croppingIdx]._id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        description: imagesData[croppingIdx].description || '',
-                        status: imagesData[croppingIdx].status || '',
-                        imageData: cropperImg.src
-                    })
-                });
-                if (res.ok) {
-                    const updatedImage = await res.json();
-                    const remoteSource = getImageDisplaySource(updatedImage, '');
-                    imagesData[croppingIdx] = {
-                        ...imagesData[croppingIdx],
+
+    // Hornear trazos pendientes en la imagen final
+    let finalSrc = cropperImg.src;
+    if (typeof markStrokes !== 'undefined' && markStrokes.length > 0) {
+        const baked = bakeMarkStrokes();
+        if (baked) finalSrc = baked;
+        markStrokes = [];
+    }
+
+    // Actualización optimista: cerrar modal y actualizar UI inmediatamente
+    imagesData[croppingIdx].src = finalSrc;
+    imagesData[croppingIdx].imageData = finalSrc;
+    imagesData[croppingIdx].signedUrl = '';
+    if (imagesData[croppingIdx]._localObjectUrl) {
+        URL.revokeObjectURL(imagesData[croppingIdx]._localObjectUrl);
+        imagesData[croppingIdx]._localObjectUrl = '';
+    }
+    const idx = croppingIdx;
+    const imageId = imagesData[idx]._id;
+    const isPending = imagesData[idx]._pendingUpload;
+    const hasSession = !!currentSessionName;
+
+    renderGrid();
+    cropperModal.style.display = 'none';
+    document.body.classList.remove('has-fullscreen-overlay');
+    if (markMode) exitMarkMode(false);
+    showToast('Cambios aplicados. Guardando...', 'success');
+
+    if (hasSession) {
+        markSessionDirty(true);
+        return;
+    }
+
+    if (imageId && !isPending) {
+        // API en background, sin loader
+        try {
+            const res = await apiFetch(`/image/${imageId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    description: imagesData[idx]?.description || '',
+                    status: imagesData[idx]?.status || '',
+                    imageData: finalSrc
+                })
+            });
+            if (res.ok) {
+                const updatedImage = await res.json();
+                const remoteSource = getImageDisplaySource(updatedImage, '');
+                if (imagesData[idx] && imagesData[idx]._id === imageId) {
+                    imagesData[idx] = {
+                        ...imagesData[idx],
                         ...updatedImage,
-                        src: cropperImg.src,
-                        imageData: cropperImg.src,
+                        src: finalSrc,
+                        imageData: finalSrc,
                         signedUrl: remoteSource || ''
                     };
-                    fetchStorageUsage();
-                } else {
-                    const errorText = await res.text();
-                    showToast(`No se pudo guardar el recorte en la base de datos. ${errorText}`, 'error');
                 }
-            } catch (error) {
-                console.error('Error guardando recorte:', error);
-                showToast('No se pudo guardar el recorte en la base de datos.', 'error');
+                fetchStorageUsage();
+            } else {
+                const errorText = await res.text();
+                showToast(`No se pudo guardar el recorte: ${errorText}`, 'error');
             }
-        } else if (!currentSessionName) {
-            markSessionDirty(true);
+        } catch (error) {
+            console.error('Error guardando recorte:', error);
+            showToast('No se pudo guardar el recorte en la base de datos.', 'error');
         }
-        renderGrid();
-        cropperModal.style.display = 'none';
-    } finally {
-        await hideSaveLoader();
+    } else {
+        markSessionDirty(true);
     }
 }
 
@@ -5375,7 +5482,474 @@ if (cropperRotateBtn) {
 if (document.getElementById('cropperCancelBtn')) {
     document.getElementById('cropperCancelBtn').onclick = function() {
         cropperModal.style.display = 'none';
+        document.body.classList.remove('has-fullscreen-overlay');
+        if (markMode) exitMarkMode(false);
+        if (typeof markStrokes !== 'undefined') markStrokes = [];
     };
+}
+
+// ============================================================
+// HERRAMIENTA "MARCAR" — dibujar trazos/figuras sobre la imagen
+// ============================================================
+let markMode = false;
+let markTool = 'pen';
+let markColor = '#ef4444';
+let markSize = 6;
+let markStrokes = [];
+let markCurrentStroke = null;
+let markIsDrawing = false;
+
+function enterMarkMode() {
+    if (!cropperImg || !cropperImg.complete) return;
+    markMode = true;
+    // NOTA: markStrokes NO se resetea — persiste para que el usuario pueda
+    // editar trazos previos al re-entrar al modo Marcar.
+    const toolbar = document.getElementById('markToolbar');
+    if (toolbar) toolbar.hidden = false;
+    document.querySelectorAll('.cropper-btns .cropper-btn').forEach((b) => b.classList.add('is-mark-hidden'));
+    cropperCanvas.classList.add('is-marking');
+    drawCropperImage();
+    cropperCanvas.addEventListener('pointerdown', onMarkPointerDown);
+    cropperCanvas.addEventListener('pointermove', onMarkPointerMove);
+    cropperCanvas.addEventListener('pointerup', onMarkPointerUp);
+    cropperCanvas.addEventListener('pointerleave', onMarkPointerUp);
+    cropperCanvas.addEventListener('pointercancel', onMarkPointerUp);
+}
+
+function exitMarkMode(applyChanges) {
+    markMode = false;
+    markIsDrawing = false;
+    markCurrentStroke = null;
+    markDraggingTextIndex = null;
+    markDraggingStrokeIndex = null;
+    markDragOriginPoints = null;
+    hideMarkTextOverlay();
+    const toolbar = document.getElementById('markToolbar');
+    if (toolbar) toolbar.hidden = true;
+    document.querySelectorAll('.cropper-btns .cropper-btn').forEach((b) => b.classList.remove('is-mark-hidden'));
+    cropperCanvas.classList.remove('is-marking');
+    cropperCanvas.removeEventListener('pointerdown', onMarkPointerDown);
+    cropperCanvas.removeEventListener('pointermove', onMarkPointerMove);
+    cropperCanvas.removeEventListener('pointerup', onMarkPointerUp);
+    cropperCanvas.removeEventListener('pointerleave', onMarkPointerUp);
+    cropperCanvas.removeEventListener('pointercancel', onMarkPointerUp);
+
+    if (applyChanges && markStrokes.length > 0) {
+        // NO horneamos los trazos en cropperImg — los dejamos como state
+        // para que sean editables al re-entrar al modo Marcar.
+        // Marcamos el cropper como cambiado para que se vea el botón Confirmar.
+        cropperHasChanges = true;
+        cropperPreviewActive = true;
+        const okBtn = document.getElementById('cropperOkBtn');
+        if (okBtn) {
+            okBtn.style.display = '';
+            okBtn.disabled = false;
+        }
+        updateCropperActionButton();
+        drawCropperImage();
+    } else if (!applyChanges) {
+        // Cancelar: descartar trazos
+        markStrokes = [];
+        drawCropperImage();
+    } else {
+        drawCropperImage();
+    }
+}
+
+function drawCropperImageWithMarks() {
+    drawCropperImage();
+}
+
+function bakeMarkStrokes() {
+    if (!markStrokes || markStrokes.length === 0) return null;
+    if (!cropperImg || !cropperImg.naturalWidth) return null;
+    const w = cropperImg.naturalWidth;
+    const h = cropperImg.naturalHeight;
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const tctx = tempCanvas.getContext('2d');
+    tctx.drawImage(cropperImg, 0, 0, w, h);
+    for (const stroke of markStrokes) {
+        renderMarkStroke(tctx, stroke);
+    }
+    return tempCanvas.toDataURL('image/png');
+}
+
+function renderMarkStroke(ctx, stroke) {
+    if (!stroke || !stroke.points || stroke.points.length === 0) return;
+    ctx.save();
+    ctx.strokeStyle = stroke.color;
+    ctx.fillStyle = stroke.color;
+    ctx.lineWidth = stroke.size;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (stroke.tool === 'pen' && stroke.points.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        }
+        ctx.stroke();
+    } else if (stroke.tool === 'line' && stroke.points.length >= 2) {
+        const p1 = stroke.points[0];
+        const p2 = stroke.points[stroke.points.length - 1];
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+    } else if (stroke.tool === 'rect' && stroke.points.length >= 2) {
+        const p1 = stroke.points[0];
+        const p2 = stroke.points[stroke.points.length - 1];
+        ctx.beginPath();
+        ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+        ctx.stroke();
+    } else if (stroke.tool === 'circle' && stroke.points.length >= 2) {
+        const p1 = stroke.points[0];
+        const p2 = stroke.points[stroke.points.length - 1];
+        const cx = (p1.x + p2.x) / 2;
+        const cy = (p1.y + p2.y) / 2;
+        const rx = Math.abs(p2.x - p1.x) / 2;
+        const ry = Math.abs(p2.y - p1.y) / 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
+    } else if (stroke.tool === 'arrow' && stroke.points.length >= 2) {
+        const p1 = stroke.points[0];
+        const p2 = stroke.points[stroke.points.length - 1];
+        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        const headLen = Math.max(12, stroke.size * 3.5);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x - Math.cos(angle) * stroke.size, p2.y - Math.sin(angle) * stroke.size);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p2.x, p2.y);
+        ctx.lineTo(p2.x - headLen * Math.cos(angle - Math.PI / 6), p2.y - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(p2.x - headLen * Math.cos(angle + Math.PI / 6), p2.y - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+    } else if (stroke.tool === 'text' && stroke.text && stroke.points.length >= 1) {
+        const fontSize = Math.max(18, stroke.size * 5);
+        ctx.font = `bold ${fontSize}px "Inter", Arial, sans-serif`;
+        ctx.textBaseline = 'top';
+        // Borde negro para legibilidad
+        ctx.lineWidth = Math.max(2, fontSize / 14);
+        ctx.strokeStyle = stroke.color === '#000000' ? '#ffffff' : '#000000';
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.strokeText(stroke.text, stroke.points[0].x, stroke.points[0].y);
+        // Relleno con el color
+        ctx.fillStyle = stroke.color;
+        ctx.fillText(stroke.text, stroke.points[0].x, stroke.points[0].y);
+    }
+    ctx.restore();
+}
+
+function getCropperCanvasCoords(event) {
+    const rect = cropperCanvas.getBoundingClientRect();
+    const scaleX = cropperCanvas.width / rect.width;
+    const scaleY = cropperCanvas.height / rect.height;
+    return {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY
+    };
+}
+
+let markDraggingTextIndex = null;
+let markDragOffset = { x: 0, y: 0 };
+let markDraggingStrokeIndex = null;
+let markDragOriginPoints = null;
+let markDragStart = { x: 0, y: 0 };
+
+function getTextBounds(stroke) {
+    if (!cropperCtx || !stroke || !stroke.text) return null;
+    const fontSize = Math.max(18, stroke.size * 5);
+    cropperCtx.font = `bold ${fontSize}px "Inter", Arial, sans-serif`;
+    const metrics = cropperCtx.measureText(stroke.text);
+    return {
+        x: stroke.points[0].x,
+        y: stroke.points[0].y,
+        w: metrics.width + 8,
+        h: fontSize * 1.25
+    };
+}
+
+function findTextAtCoord(x, y) {
+    for (let i = markStrokes.length - 1; i >= 0; i--) {
+        const s = markStrokes[i];
+        if (s.tool !== 'text') continue;
+        const b = getTextBounds(s);
+        if (!b) continue;
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+            return i;
+        }
+    }
+    return null;
+}
+
+function getStrokeBounds(stroke) {
+    if (!stroke || !stroke.points || stroke.points.length === 0) return null;
+
+    if (stroke.tool === 'text') {
+        return getTextBounds(stroke);
+    }
+
+    // Calcular bounding box de todos los puntos
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const pt of stroke.points) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y > maxY) maxY = pt.y;
+    }
+    // Padding según grosor para que sea más fácil clickear líneas finas
+    const pad = Math.max(8, (stroke.size || 6) * 1.5);
+    return {
+        x: minX - pad,
+        y: minY - pad,
+        w: (maxX - minX) + pad * 2,
+        h: (maxY - minY) + pad * 2
+    };
+}
+
+function findStrokeAtCoord(x, y) {
+    for (let i = markStrokes.length - 1; i >= 0; i--) {
+        const s = markStrokes[i];
+        const b = getStrokeBounds(s);
+        if (!b) continue;
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+            return i;
+        }
+    }
+    return null;
+}
+
+function showMarkTextOverlay(canvasX, canvasY, existingText = '') {
+    const overlay = document.getElementById('markTextOverlay');
+    const input = document.getElementById('markTextInput');
+    if (!overlay || !input || !cropperCanvas) return;
+    const rect = cropperCanvas.getBoundingClientRect();
+    const stageRect = cropperCanvas.parentElement.getBoundingClientRect();
+    const scaleX = rect.width / cropperCanvas.width;
+    const scaleY = rect.height / cropperCanvas.height;
+    const screenX = (rect.left - stageRect.left) + canvasX * scaleX;
+    const screenY = (rect.top - stageRect.top) + canvasY * scaleY;
+    overlay.style.left = `${Math.max(8, screenX)}px`;
+    overlay.style.top = `${Math.max(8, screenY)}px`;
+    overlay.dataset.canvasX = String(canvasX);
+    overlay.dataset.canvasY = String(canvasY);
+    overlay.hidden = false;
+    input.value = existingText;
+    setTimeout(() => input.focus(), 30);
+}
+
+function hideMarkTextOverlay() {
+    const overlay = document.getElementById('markTextOverlay');
+    if (overlay) {
+        overlay.hidden = true;
+        overlay.dataset.canvasX = '';
+        overlay.dataset.canvasY = '';
+    }
+}
+
+function confirmMarkTextOverlay() {
+    const overlay = document.getElementById('markTextOverlay');
+    const input = document.getElementById('markTextInput');
+    if (!overlay || !input || overlay.hidden) return;
+    const text = (input.value || '').trim();
+    if (!text) {
+        hideMarkTextOverlay();
+        return;
+    }
+    const canvasX = Number(overlay.dataset.canvasX);
+    const canvasY = Number(overlay.dataset.canvasY);
+    if (Number.isFinite(canvasX) && Number.isFinite(canvasY)) {
+        markStrokes.push({
+            tool: 'text',
+            color: markColor,
+            size: markSize,
+            points: [{ x: canvasX, y: canvasY }],
+            text: text
+        });
+        drawCropperImage();
+    }
+    hideMarkTextOverlay();
+}
+
+function onMarkPointerDown(event) {
+    if (!markMode) return;
+    event.preventDefault();
+
+    const pt = getCropperCanvasCoords(event);
+
+    if (markTool === 'select') {
+        const hitIdx = findStrokeAtCoord(pt.x, pt.y);
+        if (hitIdx !== null) {
+            markDraggingStrokeIndex = hitIdx;
+            markDragStart = { x: pt.x, y: pt.y };
+            // Guardar copia de las posiciones originales
+            markDragOriginPoints = markStrokes[hitIdx].points.map((p) => ({ x: p.x, y: p.y }));
+            cropperCanvas.setPointerCapture?.(event.pointerId);
+            cropperCanvas.classList.add('is-dragging-text');
+        }
+        return;
+    }
+
+    if (markTool === 'text') {
+        // ¿Click sobre un texto existente?
+        const hitIdx = findTextAtCoord(pt.x, pt.y);
+        if (hitIdx !== null) {
+            // Empezar a arrastrar el texto
+            markDraggingTextIndex = hitIdx;
+            const stroke = markStrokes[hitIdx];
+            markDragOffset = {
+                x: pt.x - stroke.points[0].x,
+                y: pt.y - stroke.points[0].y
+            };
+            cropperCanvas.setPointerCapture?.(event.pointerId);
+            cropperCanvas.classList.add('is-dragging-text');
+            return;
+        }
+        // Si no hay texto en la posición, crear uno nuevo con overlay
+        showMarkTextOverlay(pt.x, pt.y);
+        return;
+    }
+
+    cropperCanvas.setPointerCapture?.(event.pointerId);
+    markIsDrawing = true;
+    markCurrentStroke = {
+        tool: markTool,
+        color: markColor,
+        size: markSize,
+        points: [pt]
+    };
+    if (markTool !== 'pen') markCurrentStroke.points.push({ ...pt });
+    markStrokes.push(markCurrentStroke);
+    drawCropperImage();
+}
+
+function onMarkPointerMove(event) {
+    if (!markMode) return;
+
+    // Arrastrando un trazo cualquiera con el cursor select
+    if (markDraggingStrokeIndex !== null && markDragOriginPoints) {
+        event.preventDefault();
+        const pt = getCropperCanvasCoords(event);
+        const dx = pt.x - markDragStart.x;
+        const dy = pt.y - markDragStart.y;
+        const stroke = markStrokes[markDraggingStrokeIndex];
+        if (stroke) {
+            stroke.points = markDragOriginPoints.map((p) => ({
+                x: p.x + dx,
+                y: p.y + dy
+            }));
+            drawCropperImage();
+        }
+        return;
+    }
+
+    // Arrastrando texto (compat: cuando se usa la herramienta text)
+    if (markDraggingTextIndex !== null) {
+        event.preventDefault();
+        const pt = getCropperCanvasCoords(event);
+        const stroke = markStrokes[markDraggingTextIndex];
+        if (stroke && stroke.tool === 'text') {
+            stroke.points[0] = {
+                x: pt.x - markDragOffset.x,
+                y: pt.y - markDragOffset.y
+            };
+            drawCropperImage();
+        }
+        return;
+    }
+
+    if (!markIsDrawing || !markCurrentStroke) return;
+    event.preventDefault();
+    const pt = getCropperCanvasCoords(event);
+    if (markCurrentStroke.tool === 'pen') {
+        markCurrentStroke.points.push(pt);
+    } else {
+        markCurrentStroke.points[markCurrentStroke.points.length - 1] = pt;
+    }
+    drawCropperImage();
+}
+
+function onMarkPointerUp(event) {
+    if (!markMode) return;
+
+    if (markDraggingStrokeIndex !== null) {
+        markDraggingStrokeIndex = null;
+        markDragOriginPoints = null;
+        cropperCanvas.classList.remove('is-dragging-text');
+        return;
+    }
+
+    if (markDraggingTextIndex !== null) {
+        markDraggingTextIndex = null;
+        cropperCanvas.classList.remove('is-dragging-text');
+        return;
+    }
+
+    if (!markIsDrawing) return;
+    markIsDrawing = false;
+    if (markCurrentStroke && markCurrentStroke.tool === 'pen' && markCurrentStroke.points.length < 2) {
+        markStrokes.pop();
+    }
+    markCurrentStroke = null;
+    drawCropperImage();
+}
+
+// Event handlers para el overlay de texto
+document.getElementById('markTextOverlayConfirm')?.addEventListener('click', confirmMarkTextOverlay);
+document.getElementById('markTextOverlayCancel')?.addEventListener('click', hideMarkTextOverlay);
+document.getElementById('markTextInput')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        confirmMarkTextOverlay();
+    } else if (event.key === 'Escape') {
+        event.preventDefault();
+        hideMarkTextOverlay();
+    }
+});
+
+document.getElementById('cropperMarkBtn')?.addEventListener('click', enterMarkMode);
+document.getElementById('markExitBtn')?.addEventListener('click', () => exitMarkMode(false));
+document.getElementById('markDoneBtn')?.addEventListener('click', () => exitMarkMode(true));
+document.getElementById('markUndoBtn')?.addEventListener('click', () => {
+    markStrokes.pop();
+    drawCropperImage();
+});
+document.getElementById('markClearBtn')?.addEventListener('click', () => {
+    markStrokes = [];
+    drawCropperImage();
+});
+document.querySelectorAll('[data-mark-tool]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-mark-tool]').forEach((b) => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        markTool = btn.getAttribute('data-mark-tool');
+        if (cropperCanvas) {
+            cropperCanvas.classList.toggle('is-select-mode', markTool === 'select');
+        }
+        hideMarkTextOverlay();
+    });
+});
+document.querySelectorAll('[data-mark-color]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-mark-color]').forEach((b) => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        markColor = btn.getAttribute('data-mark-color');
+    });
+});
+const markSizeSlider = document.getElementById('markSizeSlider');
+const markSizeValue = document.getElementById('markSizeValue');
+if (markSizeSlider) {
+    markSizeSlider.addEventListener('input', (e) => {
+        markSize = Number(e.target.value);
+        if (markSizeValue) markSizeValue.textContent = String(markSize);
+    });
 }
 
 

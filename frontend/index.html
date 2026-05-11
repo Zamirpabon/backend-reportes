@@ -14,9 +14,9 @@
         window.REPORTES_SUPABASE_STORAGE_LIMIT_BYTES = 1073741824;
         window.REPORTES_SUPABASE_MAX_IMAGE_BYTES = 8388608;
     </script>
-    <link rel="stylesheet" href="css/styles.css?v=27">
-    <link rel="stylesheet" href="css/info-modal.css?v=27">
-    <link rel="stylesheet" href="css/custom-styles.css?v=27">
+    <link rel="stylesheet" href="css/styles.css?v=35">
+    <link rel="stylesheet" href="css/info-modal.css?v=35">
+    <link rel="stylesheet" href="css/custom-styles.css?v=35">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         /* --- CSS HEADER MODERNO DE SESIONES --- */
@@ -658,12 +658,54 @@
             </div>
             <div class="cropper-stage">
                 <canvas id="cropperCanvas"></canvas>
+                <div id="markTextOverlay" class="mark-text-overlay" hidden>
+                    <div class="mark-text-overlay-card">
+                        <input type="text" id="markTextInput" class="mark-text-overlay-input" placeholder="Escribe aquí..." autocomplete="off" maxlength="120">
+                        <div class="mark-text-overlay-actions">
+                            <button type="button" id="markTextOverlayConfirm" class="mark-text-overlay-btn mark-text-overlay-btn-ok" title="Confirmar (Enter)">✓</button>
+                            <button type="button" id="markTextOverlayCancel" class="mark-text-overlay-btn mark-text-overlay-btn-cancel" title="Cancelar (Esc)">×</button>
+                        </div>
+                    </div>
+                    <div class="mark-text-overlay-hint">Enter para guardar · Esc para cancelar · Arrastra el texto para moverlo</div>
+                </div>
             </div>
             <div class="cropper-btns">
                 <button id="cropperCropBtn" class="cropper-btn cropper-btn-primary">Recortar</button>
                 <button id="cropperRotateBtn" class="cropper-btn cropper-btn-secondary">Girar 90°</button>
+                <button id="cropperMarkBtn" class="cropper-btn cropper-btn-mark">✏️ Marcar</button>
                 <button id="cropperOkBtn" class="cropper-btn cropper-btn-confirm" style="display:none;" disabled>Confirmar cambios</button>
                 <button class="cropper-btn cropper-btn-cancel" id="cropperCancelBtn">Cancelar</button>
+            </div>
+            <div id="markToolbar" class="mark-toolbar" hidden>
+                <div class="mark-toolbar-group mark-toolbar-tools">
+                    <button type="button" class="mark-tool-btn" data-mark-tool="select" title="Mover trazos existentes">⤧</button>
+                    <button type="button" class="mark-tool-btn is-active" data-mark-tool="pen" title="Trazo libre">✎</button>
+                    <button type="button" class="mark-tool-btn" data-mark-tool="line" title="Línea recta">／</button>
+                    <button type="button" class="mark-tool-btn" data-mark-tool="rect" title="Rectángulo">▭</button>
+                    <button type="button" class="mark-tool-btn" data-mark-tool="circle" title="Círculo">◯</button>
+                    <button type="button" class="mark-tool-btn" data-mark-tool="arrow" title="Flecha">➜</button>
+                    <button type="button" class="mark-tool-btn" data-mark-tool="text" title="Texto">A</button>
+                </div>
+                <div class="mark-toolbar-group mark-toolbar-colors">
+                    <button type="button" class="mark-color-btn is-active" data-mark-color="#ef4444" style="background:#ef4444" title="Rojo"></button>
+                    <button type="button" class="mark-color-btn" data-mark-color="#f59e0b" style="background:#f59e0b" title="Naranja"></button>
+                    <button type="button" class="mark-color-btn" data-mark-color="#facc15" style="background:#facc15" title="Amarillo"></button>
+                    <button type="button" class="mark-color-btn" data-mark-color="#22c55e" style="background:#22c55e" title="Verde"></button>
+                    <button type="button" class="mark-color-btn" data-mark-color="#2563eb" style="background:#2563eb" title="Azul"></button>
+                    <button type="button" class="mark-color-btn" data-mark-color="#000000" style="background:#000000" title="Negro"></button>
+                    <button type="button" class="mark-color-btn" data-mark-color="#ffffff" style="background:#ffffff; border:1px solid #cbd5e1" title="Blanco"></button>
+                </div>
+                <div class="mark-toolbar-group mark-toolbar-size">
+                    <span class="mark-size-label">Grosor</span>
+                    <input type="range" id="markSizeSlider" min="2" max="20" value="6" class="mark-size-slider">
+                    <span id="markSizeValue" class="mark-size-value">6</span>
+                </div>
+                <div class="mark-toolbar-group mark-toolbar-actions">
+                    <button type="button" id="markUndoBtn" class="mark-action-btn" title="Deshacer último trazo">↶</button>
+                    <button type="button" id="markClearBtn" class="mark-action-btn" title="Borrar todas las marcas">🗑</button>
+                    <button type="button" id="markDoneBtn" class="mark-action-btn mark-action-btn-primary" title="Aplicar marcas a la foto">✓ Aplicar</button>
+                    <button type="button" id="markExitBtn" class="mark-action-btn mark-action-btn-cancel" title="Salir sin guardar">Salir</button>
+                </div>
             </div>
         </div>
     </div>
@@ -716,9 +758,9 @@
         <div class="info-dots" id="infoDots"></div>
       </div>
     </div>
-<script src="js/supabase-direct-api.js?v=27"></script>
+<script src="js/supabase-direct-api.js?v=35"></script>
 <script src="libs/sortable.min.js"></script>
-<script src="js/script.js?v=27"></script>
+<script src="js/script.js?v=35"></script>
     <script>
 (function(){
   var infoBtn = document.getElementById('infoBtn');

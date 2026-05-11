@@ -26,23 +26,30 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const MAINTENANCE_KEY = process.env.MAINTENANCE_KEY || 'maintenance-key-change-me';
 
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
-const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
+const missingEnvVars = requiredEnvVars.filter((envVar) => {
+  const value = process.env[envVar];
+  return !value || value.startsWith('PEGA_AQUI') || value === 'YOUR_SUPABASE_SERVICE_ROLE_KEY';
+});
+const SUPABASE_ENABLED = missingEnvVars.length === 0;
 
-if (missingEnvVars.length > 0) {
-  console.error(`Faltan variables de entorno: ${missingEnvVars.join(', ')}`);
-  process.exit(1);
+if (!SUPABASE_ENABLED) {
+  console.warn('\n[backend-reportes] Modo solo-estatico (sin Supabase backend).');
+  console.warn(`[backend-reportes] Variables faltantes: ${missingEnvVars.join(', ')}`);
+  console.warn('[backend-reportes] El frontend en frontend/ habla directo a Supabase y funciona igual.\n');
 }
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
+const supabase = SUPABASE_ENABLED
+  ? createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    )
+  : null;
 
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
@@ -1314,11 +1321,12 @@ app.delete('/session/:name/images', asyncHandler(async (req, res) => {
   res.json({ ok: true, sessionImages: sessionImages.length });
 }));
 
-setInterval(() => {
-  runScheduledLooseCleanup('interval');
-}, CLEANUP_INTERVAL_MS);
-
-runScheduledLooseCleanup('startup');
+if (SUPABASE_ENABLED) {
+  setInterval(() => {
+    runScheduledLooseCleanup('interval');
+  }, CLEANUP_INTERVAL_MS);
+  runScheduledLooseCleanup('startup');
+}
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
