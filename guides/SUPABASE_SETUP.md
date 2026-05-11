@@ -2,7 +2,7 @@
 
 1. Crea un proyecto en Supabase.
 2. Ve a `SQL Editor`.
-3. Ejecuta el contenido de [supabase-schema.sql](C:/Users/GZ%20White/Desktop/backend-reportes-main/supabase-schema.sql).
+3. Ejecuta el contenido de [database/supabase-schema.sql](../database/supabase-schema.sql).
 4. Ve a `Project Settings > API`.
 5. Copia `Project URL` y `service_role key`.
 6. Crea tu archivo `.env` basandote en `.env.example`.

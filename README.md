@@ -2,7 +2,7 @@
 
 Aplicacion de reportes fotograficos con:
 
-- Frontend estatico servido desde `docs/`
+- Frontend estatico servido desde `frontend/`
 - Backend Express en `server.js`
 - Base de datos y storage en Supabase
 

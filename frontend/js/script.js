@@ -223,73 +223,85 @@ function animateWindowScrollTo(targetTop) {
     smoothAnchorScrollFrame = requestAnimationFrame(step);
 }
 
+function findScrollContainer() {
+    const candidates = [
+        document.querySelector('.container'),
+        document.scrollingElement,
+        document.documentElement,
+        document.body,
+        window
+    ];
+    for (const el of candidates) {
+        if (!el) continue;
+        const target = el === window ? document.documentElement : el;
+        if (target.scrollHeight - target.clientHeight > 4) {
+            return el;
+        }
+    }
+    return window;
+}
+
+function smoothScrollTo(scrollEl, targetTop, duration = 600) {
+    const isWindow = scrollEl === window;
+    const startTop = isWindow
+        ? (window.scrollY || document.documentElement.scrollTop || 0)
+        : scrollEl.scrollTop;
+    const distance = targetTop - startTop;
+    if (Math.abs(distance) < 2) return;
+
+    const startedAt = performance.now();
+    const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    function step(now) {
+        const elapsed = now - startedAt;
+        const progress = Math.min(1, elapsed / duration);
+        const eased = easeInOutCubic(progress);
+        const nextTop = startTop + (distance * eased);
+        if (isWindow) {
+            window.scrollTo(0, nextTop);
+        } else {
+            scrollEl.scrollTop = nextTop;
+        }
+        if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
 function scrollToImageAnchor(position = 'top') {
-    // Usar .container como scroll container principal
-    const container = document.querySelector('.container');
-    if (!container) {
-        console.log('[scrollToImageAnchor] No container found');
-        return;
-    }
-
-    // Calcular posiciones basadas en el grid de imágenes
     const grid = document.getElementById('gridContainer');
-    if (!grid) {
-        console.log('[scrollToImageAnchor] No grid found');
-        return;
-    }
+    if (!grid) return;
 
-    // Calcular la posición del grid dentro del container usando offsetTop
-    let gridTopInContainer = 0;
-    let element = grid;
-    while (element && element !== container) {
-        gridTopInContainer += element.offsetTop;
-        element = element.offsetParent;
-    }
+    const scrollEl = findScrollContainer();
+    const isWindow = scrollEl === window;
+    const viewportHeight = isWindow
+        ? (window.innerHeight || document.documentElement.clientHeight)
+        : scrollEl.clientHeight;
+    const currentScrollTop = isWindow
+        ? (window.scrollY || document.documentElement.scrollTop || 0)
+        : scrollEl.scrollTop;
+    const scrollHeight = isWindow
+        ? Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+        : scrollEl.scrollHeight;
 
-    const gridHeight = grid.scrollHeight;
-    const containerHeight = container.clientHeight;
-    const containerScrollHeight = container.scrollHeight;
-
-    console.log('[DEBUG scrollToImageAnchor]', {
-        position,
-        gridTopInContainer,
-        gridHeight,
-        containerHeight,
-        containerScrollHeight,
-        containerScrollTop: container.scrollTop,
-        canScroll: containerScrollHeight > containerHeight
-    });
+    const gridRect = grid.getBoundingClientRect();
+    const scrollElRect = isWindow ? { top: 0 } : scrollEl.getBoundingClientRect();
+    const gridTopRelativeToScroller = gridRect.top - scrollElRect.top + currentScrollTop;
+    const gridHeight = grid.scrollHeight || gridRect.height;
 
     let targetTop = 0;
-
     if (position === 'top') {
-        // Ir al inicio del grid
-        targetTop = gridTopInContainer;
+        targetTop = Math.max(0, gridTopRelativeToScroller - 16);
     } else if (position === 'middle') {
-        // Ir al centro del grid
-        const gridCenter = gridTopInContainer + (gridHeight / 2);
-        targetTop = Math.max(0, gridCenter - (containerHeight / 2));
+        const gridCenter = gridTopRelativeToScroller + (gridHeight / 2);
+        targetTop = gridCenter - (viewportHeight / 2);
     } else if (position === 'bottom') {
-        // Ir al final del grid
-        targetTop = gridTopInContainer + gridHeight - containerHeight;
+        targetTop = gridTopRelativeToScroller + gridHeight - viewportHeight + 16;
     }
 
-    // Asegurar que targetTop no exceda el máximo scroll posible
-    const maxScrollTop = Math.max(0, containerScrollHeight - containerHeight);
+    const maxScrollTop = Math.max(0, scrollHeight - viewportHeight);
     targetTop = Math.max(0, Math.min(targetTop, maxScrollTop));
 
-    console.log('[scrollToImageAnchor]', {
-        position,
-        gridTopInContainer,
-        gridHeight,
-        containerHeight,
-        targetTop,
-        maxScrollTop
-    });
-
-    // Scrollear el contenedor .container
-    console.log('[SCROLLING .container]', { top: targetTop, behavior: 'smooth' });
-    container.scrollTo({ top: targetTop, behavior: 'smooth' });
+    smoothScrollTo(scrollEl, targetTop, 600);
 }
 
 function updateScrollControlState() {
@@ -1743,30 +1755,97 @@ function setCurrentSession(name = '') {
 }
 
 function syncUploadActionsSpacing() {
-    const sessionPanel = document.querySelector('.session-panel');
-    const actionsSection = document.querySelector('.upload-actions-section');
-    if (!sessionPanel || !actionsSection) return;
-
-    const baseMarginTop = 24;
-    const minGap = 20;
-
-    actionsSection.style.setProperty('position', 'relative', 'important');
-    actionsSection.style.setProperty('clear', 'both', 'important');
-    actionsSection.style.setProperty('padding-top', '0px', 'important');
-    actionsSection.style.setProperty('margin-top', `${baseMarginTop}px`, 'important');
-
-    const adjustSpacing = () => {
-        const panelRect = sessionPanel.getBoundingClientRect();
-        const actionsRect = actionsSection.getBoundingClientRect();
-        const overlap = Math.ceil((panelRect.bottom + minGap) - actionsRect.top);
-        const finalMarginTop = baseMarginTop + Math.max(0, overlap);
-        actionsSection.style.setProperty('margin-top', `${finalMarginTop}px`, 'important');
-    };
-
-    requestAnimationFrame(() => {
-        requestAnimationFrame(adjustSpacing);
-    });
+    // No-op: la separación entre la tarjeta de sesión y la fila de botones
+    // ahora se controla 100% por CSS para evitar saltos de layout cuando se
+    // carga una sesión (las transiciones de 980ms hacían que las mediciones
+    // dinámicas capturaran posiciones incorrectas y los botones quedaban
+    // encima del panel).
 }
+
+function applyMobileSessionBannerStyles(banner) {
+    if (!banner) return;
+    const isMobile = window.innerWidth <= 720;
+    const meta = banner.querySelector('.current-session-meta');
+    const state = banner.querySelector('.current-session-state');
+    const autosave = banner.querySelector('.current-session-autosave');
+    const copy = banner.querySelector('.current-session-copy');
+    const head = banner.querySelector('.current-session-head');
+    const name = banner.querySelector('.current-session-name');
+
+    if (isMobile) {
+        banner.style.cssText += `
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            flex-wrap: nowrap !important;
+            gap: 10px !important;
+            min-height: auto !important;
+            height: auto !important;
+            overflow: visible !important;
+            padding: 14px 16px !important;
+            margin-bottom: 18px !important;
+            position: relative !important;
+            z-index: 5 !important;
+        `;
+        if (copy) copy.style.cssText += `
+            width: 100% !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 6px !important;
+            flex: 0 0 auto !important;
+        `;
+        if (head) head.style.cssText += `
+            width: 100% !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+        `;
+        if (name) name.style.cssText += `
+            position: static !important;
+            width: 100% !important;
+            transform: none !important;
+            text-align: left !important;
+            margin-top: 0 !important;
+        `;
+        if (meta) meta.style.cssText += `
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            justify-content: center !important;
+            width: 100% !important;
+            gap: 8px !important;
+            flex: 0 0 auto !important;
+        `;
+        if (state) state.style.cssText += `
+            width: 100% !important;
+            box-sizing: border-box !important;
+            justify-content: center !important;
+            display: inline-flex !important;
+        `;
+        if (autosave) autosave.style.cssText += `
+            width: 100% !important;
+            box-sizing: border-box !important;
+            justify-content: center !important;
+            display: inline-flex !important;
+        `;
+    } else {
+        banner.style.cssText = '';
+        if (copy) copy.style.cssText = '';
+        if (head) head.style.cssText = '';
+        if (name) name.style.cssText = '';
+        if (meta) meta.style.cssText = '';
+        if (state) state.style.cssText = '';
+        if (autosave) autosave.style.cssText = '';
+    }
+}
+
+window.addEventListener('resize', () => {
+    const banner = document.getElementById('currentSessionBanner');
+    if (banner && banner.classList.contains('is-visible')) {
+        applyMobileSessionBannerStyles(banner);
+    }
+});
 
 function updateCurrentSessionBanner() {
     const banner = document.getElementById('currentSessionBanner');
@@ -1810,6 +1889,7 @@ function updateCurrentSessionBanner() {
         banner.innerHTML = nextHtml;
         banner.classList.toggle('is-loose-session', !currentSessionName);
         banner.classList.add('is-visible');
+        applyMobileSessionBannerStyles(banner);
     } else {
         __sessionBannerLastHtml = '';
         banner.innerHTML = '';
@@ -1878,7 +1958,7 @@ function updateSessionActionLayout() {
             if (hasDifferentSelectedSession) {
                 label.textContent = 'Guardar en la sesión seleccionada';
             } else {
-                label.textContent = 'Guardar';
+                label.textContent = 'Guardar Cambios en esta Sesión';
             }
         }
     }
@@ -2355,6 +2435,47 @@ function renderGrid() {
     restoreScrollPosition();
 }
 
+function handleFotoNumberChange(event) {
+    const input = event.target;
+    const currentIdx = Number(input.getAttribute('data-idx'));
+    const requested = parseInt(input.value, 10);
+
+    if (!Number.isInteger(currentIdx) || !imagesData[currentIdx]) return;
+
+    if (!Number.isFinite(requested) || requested < imageStartNumber) {
+        input.value = imagesData[currentIdx].index;
+        return;
+    }
+
+    const targetIdx = Math.max(0, Math.min(imagesData.length - 1, requested - imageStartNumber));
+
+    if (targetIdx === currentIdx) {
+        input.value = imagesData[currentIdx].index;
+        return;
+    }
+
+    const previousPositions = captureGridCardPositions();
+    pushUndoState('Cambiar número de foto');
+
+    // Intercambiar las dos imágenes en el array
+    const temp = imagesData[currentIdx];
+    imagesData[currentIdx] = imagesData[targetIdx];
+    imagesData[targetIdx] = temp;
+
+    if (currentSessionName) {
+        markSessionDirty(true);
+    } else if (hasPendingLooseUploads()) {
+        markSessionDirty(true);
+    } else if (imagesData.length > 0) {
+        markSessionDirty(true);
+    }
+
+    renderGrid();
+    updateImageCounter();
+    animateGridReorderFrom(previousPositions);
+    showToast(`Foto movida a la posición ${requested}.`, 'success');
+}
+
 function createImageBox(imageData, idx) {
     const div = document.createElement('div');
     const imageUiId = ensureImageUiId(imageData);
@@ -2453,7 +2574,10 @@ function createImageBox(imageData, idx) {
         <img src="${displaySource}" alt="Imagen ${imageData.index}" style="cursor:crosshair;" class="img-cropper-trigger ${shouldShowImageLoader ? 'is-loading' : ''}" data-idx="${idx}" draggable="false" />
     </div>
     <div class="image-label-desc-row">
-        <div class="image-label">Foto ${imageData.index}</div>
+        <div class="image-label">
+            <span class="image-label-text">Foto</span>
+            <input type="number" class="image-label-input" min="1" value="${imageData.index}" data-idx="${idx}" title="Cambia el número para mover esta foto a otra posición" />
+        </div>
         <textarea class="description" placeholder="Descripción de la inspección..." 
                   onchange="updateImageData(${idx}, 'description', this.value)">${imageData.description || ''}</textarea>
     </div>
@@ -2476,6 +2600,18 @@ function createImageBox(imageData, idx) {
             e.preventDefault();
             e.stopPropagation();
             handlePointerDragStartIntent.call(div, e);
+        });
+    }
+    const labelInput = div.querySelector('.image-label-input');
+    if (labelInput) {
+        labelInput.addEventListener('click', (e) => e.stopPropagation());
+        labelInput.addEventListener('pointerdown', (e) => e.stopPropagation());
+        labelInput.addEventListener('change', handleFotoNumberChange);
+        labelInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                labelInput.blur();
+            }
         });
     }
     const finishPreviewLoad = () => {
@@ -2775,18 +2911,19 @@ function computeSortableAutoScrollDelta() {
     }
 
     const scrollMargin = 180;
-    const maxScrollSpeed = 48;
+    const minSpeed = 3;
+    const maxSpeed = 14;
     const topProbe = ghostRect ? ghostRect.top : pointerY;
     const bottomProbe = ghostRect ? ghostRect.bottom : pointerY;
 
     if (topProbe < scrollMargin) {
-        const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
-        return -Math.max(12, Math.round(maxScrollSpeed * intensity));
+        const raw = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
+        return -Math.max(minSpeed, Math.round(maxSpeed * raw * raw));
     }
 
     if (bottomProbe > viewportHeight - scrollMargin) {
-        const intensity = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
-        return Math.max(12, Math.round(maxScrollSpeed * intensity));
+        const raw = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
+        return Math.max(minSpeed, Math.round(maxSpeed * raw * raw));
     }
 
     return 0;
@@ -3143,18 +3280,24 @@ function runPointerDragAutoScroll() {
     
     let scrollAmount = 0;
 
+    // Velocidad reducida y curva exponencial para arranque suave
+    const minSpeed = 3;
+    const maxSpeed = 14;
+
     // Chequear BORDE SUPERIOR: cursor o card cerca del top
     const topProbe = ghostBounds ? Math.min(clientY, ghostBounds.top) - viewportRect.top : clientY - viewportRect.top;
     if (topProbe < scrollMargin) {
-        const intensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
-        scrollAmount = -Math.max(14, Math.round(48 * intensity));
+        const rawIntensity = Math.min(1, (scrollMargin - topProbe) / scrollMargin);
+        const easedIntensity = rawIntensity * rawIntensity; // ease-in cuadrático
+        scrollAmount = -Math.max(minSpeed, Math.round(maxSpeed * easedIntensity));
     }
-    
+
     // Chequear BORDE INFERIOR: cursor o card cerca del bottom
     const bottomProbe = ghostBounds ? Math.max(clientY, ghostBounds.bottom) - viewportRect.top : clientY - viewportRect.top;
     if (bottomProbe > viewportHeight - scrollMargin) {
-        const intensity = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
-        scrollAmount = Math.max(14, Math.round(48 * intensity));
+        const rawIntensity = Math.min(1, (bottomProbe - (viewportHeight - scrollMargin)) / scrollMargin);
+        const easedIntensity = rawIntensity * rawIntensity; // ease-in cuadrático
+        scrollAmount = Math.max(minSpeed, Math.round(maxSpeed * easedIntensity));
     }
 
     // Si hay que hacer scroll y no estamos en los límites

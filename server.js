@@ -46,7 +46,7 @@ const supabase = createClient(
 
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
-app.use(express.static(path.join(__dirname, 'docs')));
+app.use(express.static(path.join(__dirname, 'frontend')));
 
 function logInfo(message, extra = {}) {
   console.log(`[backend-reportes] ${message}`, Object.keys(extra).length ? extra : '');
@@ -1321,7 +1321,7 @@ setInterval(() => {
 runScheduledLooseCleanup('startup');
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'docs', 'index.html'));
+  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
 app.listen(PORT, () => {
